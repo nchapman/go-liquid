@@ -25,13 +25,20 @@ func (c *context) push() *context {
 // get retrieves a variable from the current scope or any parent scope.
 // Returns nil if not found (Liquid semantics: undefined = nil).
 func (c *context) get(name string) any {
+	val, _ := c.lookup(name)
+	return val
+}
+
+// lookup is like get but reports whether the name was bound. Used by
+// strict-variables mode to distinguish "undefined" from "explicitly nil".
+func (c *context) lookup(name string) (any, bool) {
 	if val, ok := c.vars[name]; ok {
-		return val
+		return val, true
 	}
 	if c.parent != nil {
-		return c.parent.get(name)
+		return c.parent.lookup(name)
 	}
-	return nil
+	return nil, false
 }
 
 // set sets a variable in the current scope.

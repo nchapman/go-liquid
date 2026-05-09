@@ -621,3 +621,320 @@ func TestAndOrShortCircuit(t *testing.T) {
 		}
 	}
 }
+
+func TestInlineCommentBasic(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{`A{% # comment %}B`, "AB"},
+		{`A{%- # trim -%}B`, "AB"}, // trim markers also work
+		// Apostrophes in the comment body must NOT start a string scan.
+		{`A{% # don't worry, it's fine %}B`, "AB"},
+		// `%}` inside a single-quoted Liquid string would terminate; comment
+		// body has no string semantics so it just outputs nothing.
+		{`{% # quoted "x" 'y' done %}ok`, "ok"},
+	}
+	for _, tc := range cases {
+		got, err := Render(tc.in, nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestLiquidBlockBasic(t *testing.T) {
+	out, err := Render(
+		"{% liquid\n  assign x = 5\n  assign y = x | times: 2\n%}{{ x }}+{{ y }}",
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "5+10" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestLiquidBlockWithControlFlow(t *testing.T) {
+	out, err := Render(
+		`{% liquid
+  assign greeting = "hi"
+  if name
+    assign greeting = greeting | append: ", "
+    assign greeting = greeting | append: name
+  endif
+%}{{ greeting }}`,
+		map[string]any{"name": "Ada"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "hi, Ada" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestLiquidBlockPreservesQuotedPercent(t *testing.T) {
+	// `%}` inside a string literal must not terminate the block early.
+	out, err := Render(
+		`{% liquid
+  assign s = "a %} b"
+%}{{ s }}`,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "a %} b" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestNamedFilterArgs(t *testing.T) {
+	cases := []struct {
+		template string
+		data     map[string]any
+		want     string
+	}{
+		// Positional usage still works (default lives in kwargFilters but
+		// kwargs may be empty).
+		{`{{ x | default: "fallback" }}`, map[string]any{"x": ""}, "fallback"},
+		// allow_false:true preserves a literal false; default no longer fires.
+		{`{{ x | default: "fallback", allow_false: true }}`, map[string]any{"x": false}, "false"},
+		// allow_false:false (the default) treats false as missing.
+		{`{{ x | default: "fallback" }}`, map[string]any{"x": false}, "fallback"},
+		// Empty array still falls back even with allow_false.
+		{`{{ x | default: "fallback", allow_false: true }}`, map[string]any{"x": []any{}}, "fallback"},
+	}
+	for _, tc := range cases {
+		got, err := Render(tc.template, tc.data)
+		if err != nil {
+			t.Errorf("%s: %v", tc.template, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s with %v: got %q, want %q", tc.template, tc.data, got, tc.want)
+		}
+	}
+}
+
+func TestPositionalCannotFollowNamed(t *testing.T) {
+	// `key: value, positional` is a parse error.
+	_, err := Parse(`{{ x | default: allow_false: true, "fallback" }}`)
+	if err == nil {
+		t.Fatal("expected parse error for positional arg after named arg")
+	}
+	if !strings.Contains(err.Error(), "named") {
+		t.Fatalf("error doesn't mention named arg: %v", err)
+	}
+}
+
+func TestUnknownKwargsIgnoredOnPlainFilter(t *testing.T) {
+	// upcase doesn't accept kwargs; unknown kwargs are silently dropped
+	// (matching Shopify's "extra hash arg is no-op" behavior).
+	out, err := Render(`{{ "hi" | upcase: extra: 1 }}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "HI" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestStrictVariablesErrorsOnUndefined(t *testing.T) {
+	tmpl := MustParse("Hello, {{ name }}!\n{{ missing }}")
+	_, err := tmpl.Render(map[string]any{"name": "Ada"}, StrictVariables())
+	if err == nil {
+		t.Fatal("expected error for undefined variable in strict mode")
+	}
+	var re *RenderError
+	if !errors.As(err, &re) {
+		t.Fatalf("expected *RenderError, got %T: %v", err, err)
+	}
+	if re.Line != 2 {
+		t.Errorf("expected line 2, got %d", re.Line)
+	}
+	if !strings.Contains(re.Inner.Error(), "missing") {
+		t.Errorf("error doesn't mention missing variable: %v", re.Inner)
+	}
+}
+
+func TestStrictVariablesAllowsExplicitNil(t *testing.T) {
+	// A variable explicitly set to nil is still "defined" — strict mode
+	// distinguishes undefined from explicitly-nil.
+	out, err := Render(`{{ x }}!`, map[string]any{"x": nil}, StrictVariables())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "!" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestStrictFiltersErrorsOnUnknown(t *testing.T) {
+	_, err := Render(`{{ "x" | nonsense }}`, nil, StrictFilters())
+	if err == nil {
+		t.Fatal("expected error for unknown filter in strict mode")
+	}
+	var re *RenderError
+	if !errors.As(err, &re) {
+		t.Fatalf("expected *RenderError, got %T: %v", err, err)
+	}
+	if !strings.Contains(re.Inner.Error(), "nonsense") {
+		t.Errorf("error doesn't mention filter name: %v", re.Inner)
+	}
+}
+
+func TestRenderErrorCarriesPositionForFilterFailure(t *testing.T) {
+	// divided_by 0 raises via filterError; the wrapper at FilterExpr's
+	// position attaches line/col so callers can pinpoint the offending
+	// filter even on a multi-line template.
+	_, err := Render("ok\nthen {{ 10 | divided_by: 0 }} done\n", nil)
+	var re *RenderError
+	if !errors.As(err, &re) {
+		t.Fatalf("expected *RenderError, got %T: %v", err, err)
+	}
+	if re.Line != 2 {
+		t.Errorf("expected line 2, got %d (err=%v)", re.Line, err)
+	}
+}
+
+func TestLaxModeStillSilentOnUndefined(t *testing.T) {
+	out, err := Render(`Hello, {{ missing | default: "stranger" }}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "Hello, stranger" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestEchoTag(t *testing.T) {
+	cases := []struct {
+		template string
+		data     map[string]any
+		want     string
+	}{
+		{`{% echo "hi" %}`, nil, "hi"},
+		{`{% echo name | upcase %}`, map[string]any{"name": "ada"}, "ADA"},
+		{`{% liquid
+  assign x = 5
+  echo x | times: 3
+%}`, nil, "15"},
+		{`{% liquid
+  for i in (1..3)
+    echo i
+    echo "-"
+  endfor
+%}`, nil, "1-2-3-"},
+	}
+	for _, tc := range cases {
+		got, err := Render(tc.template, tc.data)
+		if err != nil {
+			t.Errorf("%s: %v", tc.template, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.template, got, tc.want)
+		}
+	}
+}
+
+func TestLiquidBlockRejectsBlockTags(t *testing.T) {
+	cases := []string{
+		"{% liquid\n  raw\n  hello\n  endraw\n%}",
+		"{% liquid\n  comment\n  hello\n  endcomment\n%}",
+		"{% liquid\n  liquid\n%}",
+	}
+	for _, src := range cases {
+		_, err := Parse(src)
+		if err == nil {
+			t.Errorf("expected parse error for: %q", src)
+			continue
+		}
+		if !strings.Contains(err.Error(), "not allowed inside") {
+			t.Errorf("error doesn't mention disallowed: %v", err)
+		}
+	}
+}
+
+func TestStrictVariablesProperty(t *testing.T) {
+	tmpl := MustParse("{{ user.name }}\n{{ user.missing }}")
+	_, err := tmpl.Render(map[string]any{
+		"user": map[string]any{"name": "Ada"},
+	}, StrictVariables())
+	if err == nil {
+		t.Fatal("expected error for undefined property in strict mode")
+	}
+	var re *RenderError
+	if !errors.As(err, &re) {
+		t.Fatalf("expected *RenderError, got %T: %v", err, err)
+	}
+	if re.Line != 2 {
+		t.Errorf("expected line 2, got %d", re.Line)
+	}
+	if !strings.Contains(re.Inner.Error(), "missing") {
+		t.Errorf("error doesn't mention missing property: %v", re.Inner)
+	}
+}
+
+func TestStrictVariablesIndex(t *testing.T) {
+	tmpl := MustParse(`{{ items[10] }}`)
+	_, err := tmpl.Render(map[string]any{"items": []any{1, 2, 3}}, StrictVariables())
+	if err == nil {
+		t.Fatal("expected error for out-of-range index in strict mode")
+	}
+	var re *RenderError
+	if !errors.As(err, &re) || !strings.Contains(re.Inner.Error(), "index") {
+		t.Fatalf("expected RenderError mentioning index: %v", err)
+	}
+}
+
+func TestStrictVariablesAllowsMapWithExplicitNil(t *testing.T) {
+	// Property explicitly set to nil is "found" — strict mode shouldn't fire.
+	out, err := Render(`[{{ user.name }}]`,
+		map[string]any{"user": map[string]any{"name": nil}}, StrictVariables())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "[]" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestUnclosedLiquidBlockErrors(t *testing.T) {
+	_, err := Parse("{% liquid\n  assign x = 1\n  echo x")
+	if err == nil {
+		t.Fatal("expected parse error for unclosed {% liquid %} block")
+	}
+	if !strings.Contains(err.Error(), "unterminated") {
+		t.Fatalf("error doesn't mention unterminated: %v", err)
+	}
+}
+
+func TestUnclosedInlineCommentErrors(t *testing.T) {
+	_, err := Parse(`{% # never closes`)
+	if err == nil {
+		t.Fatal("expected parse error for unclosed inline comment")
+	}
+	if !strings.Contains(err.Error(), "unterminated") {
+		t.Fatalf("error doesn't mention unterminated: %v", err)
+	}
+}
+
+func TestParseErrorEscapesNewlinesInTokenLiteral(t *testing.T) {
+	// The string literal includes a newline (\n). The error message must
+	// quote the literal (%q) so log lines aren't injected by the offending
+	// template.
+	_, err := Parse(`{{ "fake\nlevel=INFO" badnesss `) // missing close
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if strings.Contains(err.Error(), "\nlevel=INFO") {
+		t.Fatalf("error contains raw newline (log injection): %q", err.Error())
+	}
+}

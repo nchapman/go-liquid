@@ -47,6 +47,7 @@ const (
 	tokenLParen   // (
 	tokenRParen   // )
 	tokenRange    // ..
+	tokenHash     // # (only meaningful at the start of a tag: {% # comment %})
 
 	// Comparison
 	tokenEq // ==

@@ -314,6 +314,9 @@ func (l *lexer) scanExpression(line, col int) token {
 	case '-':
 		l.readChar()
 		return token{typ: tokenMinus, literal: "-", line: line, column: col}
+	case '#':
+		l.readChar()
+		return token{typ: tokenHash, literal: "#", line: line, column: col}
 	case '"', '\'':
 		return l.scanString()
 	default:
@@ -537,4 +540,51 @@ func (l *lexer) scanCommentBlock() (string, int, int, bool) {
 
 	// EOF reached without finding endcomment
 	return l.input[startPos:l.pos], startLine, startCol, false
+}
+
+// scanToTagClose consumes everything up to and including the next %} or
+// -%} (skipping over string literals so a `%}` inside quotes is not
+// mistaken for the terminator). The caller decides whether to honor
+// strings via skipStrings — inline comments treat the body as plain
+// prose, so an apostrophe in "don't" must NOT begin a string.
+//
+// Returns (content, trimRight, closed). closed is false when EOF was
+// reached without finding a tag terminator; callers should report a parse
+// error in that case rather than treat the unterminated input as a
+// successful empty body.
+func (l *lexer) scanToTagClose(skipStrings bool) (content string, trimRight, closed bool) {
+	startPos := l.pos
+	for l.ch != 0 {
+		if skipStrings && (l.ch == '"' || l.ch == '\'') {
+			quote := l.ch
+			l.readChar()
+			for l.ch != 0 && l.ch != quote {
+				if l.ch == '\\' && l.peekChar() != 0 {
+					l.readChar()
+				}
+				l.readChar()
+			}
+			if l.ch != 0 {
+				l.readChar() // closing quote
+			}
+			continue
+		}
+		if l.ch == '-' && l.peekChar() == '%' && l.peekCharN(2) == '}' {
+			end := l.pos
+			l.readChar() // -
+			l.readChar() // %
+			l.readChar() // }
+			l.mode = modeText
+			return l.input[startPos:end], true, true
+		}
+		if l.ch == '%' && l.peekChar() == '}' {
+			end := l.pos
+			l.readChar() // %
+			l.readChar() // }
+			l.mode = modeText
+			return l.input[startPos:end], false, true
+		}
+		l.readChar()
+	}
+	return l.input[startPos:l.pos], false, false
 }

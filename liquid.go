@@ -68,16 +68,44 @@ func MustParse(source string) *Template {
 	return t
 }
 
+// RenderOption configures a single Render call. Options are applied in
+// order; later options override earlier ones.
+type RenderOption func(*renderOpts)
+
+type renderOpts struct {
+	strictVariables bool
+	strictFilters   bool
+}
+
+// StrictVariables makes Render fail when a referenced variable is
+// undefined. By default Liquid silently treats undefined as nil.
+func StrictVariables() RenderOption {
+	return func(o *renderOpts) { o.strictVariables = true }
+}
+
+// StrictFilters makes Render fail when a filter name does not resolve.
+// By default Liquid passes the input through unchanged.
+func StrictFilters() RenderOption {
+	return func(o *renderOpts) { o.strictFilters = true }
+}
+
 // Render executes the template against data and returns the rendered string.
-func (t *Template) Render(data any) (string, error) {
+// Pass StrictVariables and/or StrictFilters to opt into strict semantics.
+func (t *Template) Render(data any, opts ...RenderOption) (string, error) {
+	var o renderOpts
+	for _, opt := range opts {
+		opt(&o)
+	}
 	eval := newEvaluator(toStringMap(data))
 	eval.partials = t.partials.Load()
+	eval.strictVariables = o.strictVariables
+	eval.strictFilters = o.strictFilters
 	return eval.evaluate(t.ast)
 }
 
 // RenderTo executes the template against data and writes the result to w.
-func (t *Template) RenderTo(w io.Writer, data any) error {
-	out, err := t.Render(data)
+func (t *Template) RenderTo(w io.Writer, data any, opts ...RenderOption) error {
+	out, err := t.Render(data, opts...)
 	if err != nil {
 		return err
 	}
@@ -87,17 +115,17 @@ func (t *Template) RenderTo(w io.Writer, data any) error {
 
 // Render parses and executes a template in one call. For templates rendered
 // repeatedly, prefer Parse + (*Template).Render to avoid re-parsing.
-func Render(source string, data any) (string, error) {
+func Render(source string, data any, opts ...RenderOption) (string, error) {
 	t, err := Parse(source)
 	if err != nil {
 		return "", err
 	}
-	return t.Render(data)
+	return t.Render(data, opts...)
 }
 
 // MustRender is like Render but panics on parse or render error.
-func MustRender(source string, data any) string {
-	out, err := Render(source, data)
+func MustRender(source string, data any, opts ...RenderOption) string {
+	out, err := Render(source, data, opts...)
 	if err != nil {
 		panic(err)
 	}

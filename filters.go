@@ -84,8 +84,8 @@ var filters = map[string]FilterFunc{
 	"flatten":      filterFlatten,
 	"sum":          filterSum,
 
-	// Utility filters
-	"default": filterDefault,
+	// `default` lives in kwargFilters because it accepts the `allow_false:`
+	// named arg; positional-only callers keep working through the same path.
 
 	// Math filters
 	"plus":       filterPlus,
@@ -660,30 +660,43 @@ func equalValues(a, b any) bool {
 
 // Utility filters
 
-// filterDefault falls back to args[0] when input is "missing" — Shopify's
-// criterion is `nil OR false OR responds-to-empty?-and-is-empty`, i.e. nil,
-// false, "", [], {}. (This is broader than Liquid truthiness, which is
-// just nil/false.) The optional second arg `allow_false: true` would skip
-// the false case; we do not support named filter args yet.
-func filterDefault(input any, args ...any) any {
-	if isDefaultMissing(input) {
+// kwargFilterFunc is the internal signature for filters that accept named
+// arguments. The map is the evaluated key:value pairs from the template
+// (e.g. `default: 0, allow_false: true`). Filters in this table do not
+// also appear in the FilterFunc map.
+type kwargFilterFunc func(input any, args []any, kwargs map[string]any) any
+
+var kwargFilters = map[string]kwargFilterFunc{
+	"default": filterDefaultKw,
+}
+
+// filterDefaultKw replaces the basic default filter when called with named
+// arguments. Without `allow_false: true`, falsy and blank inputs fall back
+// to the default value; with it, only nil and empty (but not false) do.
+// Mirrors Shopify standardfilters.rb#default.
+func filterDefaultKw(input any, args []any, kwargs map[string]any) any {
+	allowFalse, _ := kwargs["allow_false"].(bool)
+	fallback := func() any {
 		if len(args) > 0 {
 			return args[0]
 		}
 		return ""
 	}
-	return input
-}
 
-// isDefaultMissing is `isBlank` minus the whitespace-only-string rule:
-// Shopify's `default` falls back when input is nil/false/""/[]/{} but
-// keeps non-empty whitespace strings ("   "), since Ruby's String#empty?
-// (which Shopify's default consults) is purely length==0.
-func isDefaultMissing(v any) bool {
-	if s, ok := v.(string); ok {
-		return s == ""
+	if input == nil {
+		return fallback()
 	}
-	return isBlank(v)
+	if b, ok := input.(bool); ok {
+		if !b && !allowFalse {
+			return fallback()
+		}
+		// false with allow_false:true OR true → fall through to "non-empty"
+		return input
+	}
+	if isEmpty(input) {
+		return fallback()
+	}
+	return input
 }
 
 // Math filters

@@ -17,11 +17,13 @@ const maxRangeSize = 1_000_000
 
 // evaluator executes a parsed template.
 type evaluator struct {
-	ctx           *context
-	cycleCounters map[string]int // tracks cycle position for each group
-	counterVars   map[string]int // tracks increment/decrement counters
-	partials      *partialCache  // nil if no loader configured
-	partialDepth  int            // current depth through render/include
+	ctx             *context
+	cycleCounters   map[string]int // tracks cycle position for each group
+	counterVars     map[string]int // tracks increment/decrement counters
+	partials        *partialCache  // nil if no loader configured
+	partialDepth    int            // current depth through render/include
+	strictVariables bool           // error on undefined identifier
+	strictFilters   bool           // error on unknown filter name
 }
 
 func newEvaluator(data map[string]any) *evaluator {
@@ -50,6 +52,18 @@ func (e *evaluator) evalNodes(nodes []Node) (string, error) {
 }
 
 func (e *evaluator) evalNode(node Node) (string, error) {
+	out, err := e.evalNodeInner(node)
+	// Anchor the error to this node's position if the inner call returned a
+	// bare error; deeper sites (filter, partial) already wrap at finer
+	// positions and wrapAtNode is a no-op for *RenderError. errBreak and
+	// errContinue are control-flow signals, not errors — leave them alone.
+	if err != nil && err != errBreak && err != errContinue {
+		err = wrapAtNode(node, err)
+	}
+	return out, err
+}
+
+func (e *evaluator) evalNodeInner(node Node) (string, error) {
 	switch n := node.(type) {
 	case *TextNode:
 		return n.Text, nil
@@ -115,6 +129,9 @@ func (e *evaluator) evalNode(node Node) (string, error) {
 
 	case *IncludeTag:
 		return e.evalIncludeTag(n)
+
+	case *LiquidTag:
+		return e.evalNodes(n.Body)
 
 	default:
 		return "", nil
@@ -513,7 +530,13 @@ func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
 func (e *evaluator) evalExpr(expr Expression) (any, error) {
 	switch x := expr.(type) {
 	case *IdentExpr:
-		return e.ctx.get(x.Name), nil
+		val := e.ctx.get(x.Name)
+		if val == nil && e.strictVariables {
+			if _, ok := e.ctx.lookup(x.Name); !ok {
+				return nil, wrapAtNode(x, fmt.Errorf("undefined variable %q", x.Name))
+			}
+		}
+		return val, nil
 
 	case *LiteralExpr:
 		return x.Value, nil
@@ -523,7 +546,11 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return getProperty(obj, x.Property), nil
+		val, ok := getPropertyOK(obj, x.Property)
+		if !ok && e.strictVariables {
+			return nil, wrapAtNode(x, fmt.Errorf("undefined property %q", x.Property))
+		}
+		return val, nil
 
 	case *IndexExpr:
 		obj, err := e.evalExpr(x.Object)
@@ -534,18 +561,16 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return getIndex(obj, idx), nil
+		val, ok := getIndexOK(obj, idx)
+		if !ok && e.strictVariables {
+			return nil, wrapAtNode(x, fmt.Errorf("undefined index %v", idx))
+		}
+		return val, nil
 
 	case *FilterExpr:
 		input, err := e.evalExpr(x.Input)
 		if err != nil {
 			return nil, err
-		}
-
-		filter, ok := getFilter(x.Name)
-		if !ok {
-			// Unknown filter - return input unchanged
-			return input, nil
 		}
 
 		var args []any
@@ -556,12 +581,41 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 			}
 			args = append(args, val)
 		}
-
-		out := filter(input, args...)
-		if fe, ok := out.(filterError); ok {
-			return nil, fe.err
+		var kwargs map[string]any
+		if len(x.Kwargs) > 0 {
+			kwargs = make(map[string]any, len(x.Kwargs))
+			for _, kv := range x.Kwargs {
+				val, err := e.evalExpr(kv.Value)
+				if err != nil {
+					return nil, err
+				}
+				kwargs[kv.Name] = val
+			}
 		}
-		return out, nil
+
+		// Filters that accept kwargs are registered in a parallel table.
+		// Plain FilterFuncs receive only positional args; any kwargs the
+		// template provides for them are silently ignored, matching
+		// Shopify's behavior (extra hash arg is a no-op).
+		if fn, ok := kwargFilters[x.Name]; ok {
+			out := fn(input, args, kwargs)
+			if fe, ok := out.(filterError); ok {
+				return nil, wrapAtNode(x, fe.err)
+			}
+			return out, nil
+		}
+		if fn, ok := getFilter(x.Name); ok {
+			out := fn(input, args...)
+			if fe, ok := out.(filterError); ok {
+				return nil, wrapAtNode(x, fe.err)
+			}
+			return out, nil
+		}
+		if e.strictFilters {
+			return nil, wrapAtNode(x, fmt.Errorf("unknown filter %q", x.Name))
+		}
+		// Unknown filter — return input unchanged (lax Liquid semantics).
+		return input, nil
 
 	case *BinaryExpr:
 		return e.evalBinaryExpr(x)
@@ -631,111 +685,123 @@ func (e *evaluator) evalBinaryExpr(expr *BinaryExpr) (any, error) {
 	}
 }
 
-// getProperty gets a property from an object.
+// getProperty returns a property value, or nil if absent.
 func getProperty(obj any, prop string) any {
+	v, _ := getPropertyOK(obj, prop)
+	return v
+}
+
+// getPropertyOK is like getProperty but reports whether the property was
+// actually defined on the receiver. Used by strict-variables mode to
+// distinguish "key is absent" from "key is present and explicitly nil".
+//
+// The Liquid built-ins `first`, `last`, and `size` are always considered
+// present on any value that toSlice/filterSize can handle. Struct method
+// dispatch is also considered present when a matching method is invoked.
+func getPropertyOK(obj any, prop string) (any, bool) {
 	if obj == nil {
-		return nil
+		return nil, false
 	}
 
-	// Handle map[string]any (includes forloop objects)
 	if m, ok := obj.(map[string]any); ok {
-		return m[prop]
+		v, present := m[prop]
+		return v, present
 	}
 
-	// Handle special properties on arrays
 	switch prop {
 	case "first":
 		if slice := toSlice(obj); len(slice) > 0 {
-			return slice[0]
+			return slice[0], true
 		}
-		return nil
+		return nil, true
 	case "last":
 		if slice := toSlice(obj); len(slice) > 0 {
-			return slice[len(slice)-1]
+			return slice[len(slice)-1], true
 		}
-		return nil
+		return nil, true
 	case "size":
-		return filterSize(obj)
+		return filterSize(obj), true
 	}
 
-	// Use reflection for struct fields
 	rv := reflect.ValueOf(obj)
 	if rv.Kind() == reflect.Pointer {
 		rv = rv.Elem()
 	}
 	if rv.Kind() == reflect.Struct {
-		// Try field
 		field := rv.FieldByName(prop)
 		if field.IsValid() && field.CanInterface() {
-			return field.Interface()
+			return field.Interface(), true
 		}
-		// Try method (only if it takes no arguments)
 		method := reflect.ValueOf(obj).MethodByName(prop)
 		if method.IsValid() && method.Type().NumIn() == 0 {
 			results := method.Call(nil)
 			if len(results) > 0 {
-				return results[0].Interface()
+				return results[0].Interface(), true
 			}
+			return nil, true
 		}
 	}
 
-	// Try map with any key type
 	if rv.Kind() == reflect.Map {
 		key := reflect.ValueOf(prop)
 		val := rv.MapIndex(key)
 		if val.IsValid() {
-			return val.Interface()
+			return val.Interface(), true
 		}
 	}
 
-	return nil
+	return nil, false
 }
 
-// getIndex gets an element by index from an object.
+// getIndex returns an element by index, or nil if absent / out of range.
 func getIndex(obj any, idx any) any {
+	v, _ := getIndexOK(obj, idx)
+	return v
+}
+
+// getIndexOK is the strict-aware variant. Reports false when the
+// requested index is out of range or the object isn't indexable.
+func getIndexOK(obj any, idx any) (any, bool) {
 	if obj == nil {
-		return nil
+		return nil, false
 	}
 
-	// Handle string index
 	if s, ok := idx.(string); ok {
-		return getProperty(obj, s)
+		return getPropertyOK(obj, s)
 	}
 
-	// Handle numeric index
 	i := int(toInt(toNumber(idx)))
 
 	switch v := obj.(type) {
 	case []any:
 		if i >= 0 && i < len(v) {
-			return v[i]
+			return v[i], true
 		}
-		// Negative index
 		if i < 0 && -i <= len(v) {
-			return v[len(v)+i]
+			return v[len(v)+i], true
 		}
-		return nil
+		return nil, false
 	case string:
 		if i >= 0 && i < len(v) {
-			return string(v[i])
+			return string(v[i]), true
 		}
 		if i < 0 && -i <= len(v) {
-			return string(v[len(v)+i])
+			return string(v[len(v)+i]), true
 		}
-		return nil
+		return nil, false
 	default:
 		rv := reflect.ValueOf(obj)
 		if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
 			if i >= 0 && i < rv.Len() {
-				return rv.Index(i).Interface()
+				return rv.Index(i).Interface(), true
 			}
 			if i < 0 && -i <= rv.Len() {
-				return rv.Index(rv.Len() + i).Interface()
+				return rv.Index(rv.Len() + i).Interface(), true
 			}
 		}
 	}
 
-	return nil
+	return nil, false
 }
 
 // equal checks if two values are equal.

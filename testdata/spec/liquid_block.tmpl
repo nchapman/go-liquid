@@ -1,0 +1,9 @@
+{# data: {"items": [1, 2, 3, 4, 5]} #}
+{%- liquid
+  assign total = 0
+  for x in items
+    assign total = total | plus: x
+  endfor
+  assign label = "Sum"
+-%}
+{{ label }}: {{ total }}

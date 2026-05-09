@@ -86,11 +86,14 @@ func (e *IndexExpr) node()                   {}
 func (e *IndexExpr) expr()                   {}
 func (e *IndexExpr) Pos() (line, column int) { return e.Line, e.Column }
 
-// FilterExpr represents expr | filter or expr | filter: arg.
+// FilterExpr represents `expr | filter` or `expr | filter: arg, key: val`.
+// Args holds positional arguments; Kwargs holds the trailing key:value pairs
+// (Shopify's "filter named arguments"). Most filters use only Args.
 type FilterExpr struct {
 	Input  Expression
 	Name   string
 	Args   []Expression
+	Kwargs []NamedArg
 	Line   int
 	Column int
 }
@@ -275,6 +278,18 @@ type DecrementTag struct {
 
 func (t *DecrementTag) node()                   {}
 func (t *DecrementTag) Pos() (line, column int) { return t.Line, t.Column }
+
+// LiquidTag represents {% liquid ... %}, a block of newline-separated tag
+// statements written without per-line {% %} delimiters. The body is parsed
+// as a sequence of regular tags at parse time and stored here.
+type LiquidTag struct {
+	Body   []Node
+	Line   int
+	Column int
+}
+
+func (t *LiquidTag) node()                   {}
+func (t *LiquidTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // NamedArg is a key: value pair passed to {% render %} or {% include %}.
 type NamedArg struct {

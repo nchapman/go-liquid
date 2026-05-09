@@ -1,6 +1,9 @@
 package liquid
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 // parser parses a Liquid template into an AST.
 type parser struct {
@@ -120,7 +123,7 @@ func (p *parser) parseNodeWithTrim() (node Node, trimLeft, trimRight bool, err e
 		return node, trimLeft, trimRight, err
 	default:
 		err = newParseError(p.curToken.line, p.curToken.column,
-			"unexpected token: %v", p.curToken.literal)
+			"unexpected token: %q", p.curToken.literal)
 		p.nextToken()
 		return nil, false, false, err
 	}
@@ -139,7 +142,7 @@ func (p *parser) parseOutputWithTrim() (Node, bool, error) {
 	trimRight := p.curToken.typ == tokenOutputTrimR
 	if p.curToken.typ != tokenOutputClose && p.curToken.typ != tokenOutputTrimR {
 		return nil, false, newParseError(p.curToken.line, p.curToken.column,
-			"expected }}, got %v", p.curToken.literal)
+			"expected }}, got %q", p.curToken.literal)
 	}
 	p.nextToken()
 
@@ -162,9 +165,15 @@ func (p *parser) parseTagWithTrim() (Node, bool, error) {
 func (p *parser) parseTag() (Node, error) {
 	p.nextToken() // consume {% or {%-
 
+	// `{% # ... %}` is an inline comment — Shopify Liquid recognizes any tag
+	// whose body starts with `#` as a comment to be discarded entirely.
+	if p.curToken.typ == tokenHash {
+		return p.parseInlineCommentTag()
+	}
+
 	if p.curToken.typ != tokenIdent {
 		return nil, newParseError(p.curToken.line, p.curToken.column,
-			"expected tag name, got %v", p.curToken.literal)
+			"expected tag name, got %q", p.curToken.literal)
 	}
 	switch p.curToken.literal {
 	case "if":
@@ -197,9 +206,125 @@ func (p *parser) parseTag() (Node, error) {
 		return p.parsePartialTag(true)
 	case "include":
 		return p.parsePartialTag(false)
+	case "echo":
+		return p.parseEchoTag()
+	case "liquid":
+		return p.parseLiquidTag()
 	}
 	return nil, newParseError(p.curToken.line, p.curToken.column,
-		"unknown tag: %s", p.curToken.literal)
+		"unknown tag: %q", p.curToken.literal)
+}
+
+// parseEchoTag handles {% echo expr | filter1 | filter2 %}. The body is an
+// expression (with optional filter chain) and the result is rendered, so
+// {% echo x | upcase %} is equivalent to {{ x | upcase }}. This tag is the
+// canonical way to emit output inside a {% liquid %} block, where the
+// {{ ... }} delimiter form isn't available.
+func (p *parser) parseEchoTag() (Node, error) {
+	line := p.curToken.line
+	column := p.curToken.column
+	p.nextToken() // consume "echo"
+
+	expr, err := p.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expectTagClose(); err != nil {
+		return nil, err
+	}
+	return &OutputNode{Expr: expr, Line: line, Column: column}, nil
+}
+
+// parseInlineCommentTag handles {% # comment text %}. Anything after the `#`
+// up to %} is discarded.
+func (p *parser) parseInlineCommentTag() (Node, error) {
+	line := p.curToken.line
+	column := p.curToken.column
+	// Switch lexer to text mode and consume to the closing tag delimiter.
+	// The ws/expression lexer has already consumed the `#`; everything that
+	// remains in the tag body is comment content.
+	p.l.mode = modeText
+	// Comment body is treated as prose — a `'` in "don't" must not begin a
+	// string literal — so we don't skip over strings.
+	content, trimRight, closed := p.l.scanToTagClose(false)
+	if !closed {
+		return nil, &ParseError{
+			Message: "unterminated inline comment ({% # ... %}): expected %}",
+			Line:    line,
+			Column:  column,
+		}
+	}
+	p.trimNextText = trimRight
+	p.nextToken() // refresh
+	return &CommentTag{Content: content, Line: line, Column: column}, nil
+}
+
+// parseLiquidTag handles {% liquid ... %}. The body is a sequence of tag
+// statements, one per line, written without their own {% %} delimiters.
+// We re-emit them as a synthetic source string and parse it as a
+// sub-template so every existing tag parser keeps working unchanged.
+//
+// Important: we must NOT call p.nextToken() after consuming "liquid",
+// because in modeTag the lexer would skip whitespace (including the
+// newline that begins the body) and consume the first body word as a
+// token, leaving l.pos in the middle of the body. Switch the lexer to
+// text mode immediately so the body capture starts at the byte right
+// after "liquid".
+func (p *parser) parseLiquidTag() (Node, error) {
+	line := p.curToken.line
+	column := p.curToken.column
+
+	// Switch the lexer to text mode in place. l.pos currently points at the
+	// first character after "liquid"; scanToTagClose reads from there.
+	p.l.mode = modeText
+	body, trimRight, closed := p.l.scanToTagClose(true)
+	if !closed {
+		return nil, &ParseError{
+			Message: "unterminated {% liquid %} block: expected %}",
+			Line:    line,
+			Column:  column,
+		}
+	}
+	p.trimNextText = trimRight
+
+	// Build a synthetic source: each non-blank line becomes its own
+	// {% line %}. Blank lines are dropped. Block-form tags whose body
+	// spans multiple lines (raw/endraw, comment/endcomment) cannot appear
+	// here without producing nonsense — reject them with a clear error so
+	// authors aren't surprised by silent garbled output. `liquid` is also
+	// disallowed (no nested liquid blocks).
+	var sb strings.Builder
+	for _, raw := range strings.Split(body, "\n") {
+		stripped := strings.TrimSpace(raw)
+		if stripped == "" {
+			continue
+		}
+		first, _, _ := strings.Cut(stripped, " ")
+		switch first {
+		case "raw", "endraw", "comment", "endcomment", "liquid":
+			return nil, &ParseError{
+				Message: "tag '" + first + "' is not allowed inside {% liquid %} block",
+				Line:    line,
+				Column:  column,
+			}
+		}
+		sb.WriteString("{% ")
+		sb.WriteString(stripped)
+		sb.WriteString(" %}")
+	}
+
+	sub := newParser(sb.String())
+	ast, err := sub.parse()
+	if err != nil {
+		return nil, &ParseError{
+			Message: "in {% liquid %} block: " + err.Error(),
+			Line:    line,
+			Column:  column,
+		}
+	}
+
+	p.nextToken() // refresh after lexer mode switch
+	return &LiquidTag{Body: ast.nodes, Line: line, Column: column}, nil
 }
 
 func (p *parser) parseIfTag() (Node, error) {
@@ -453,14 +578,14 @@ func (p *parser) parseForTag() (Node, error) {
 
 	if p.curToken.typ != tokenIdent {
 		return nil, newParseError(p.curToken.line, p.curToken.column,
-			"expected variable name, got %v", p.curToken.literal)
+			"expected variable name, got %q", p.curToken.literal)
 	}
 	varName := p.curToken.literal
 	p.nextToken()
 
 	if !p.isWord("in") {
 		return nil, newParseError(p.curToken.line, p.curToken.column,
-			"expected 'in', got %v", p.curToken.literal)
+			"expected 'in', got %q", p.curToken.literal)
 	}
 	p.nextToken()
 
@@ -475,7 +600,7 @@ func (p *parser) parseForTag() (Node, error) {
 
 		if p.curToken.typ != tokenRange {
 			return nil, newParseError(p.curToken.line, p.curToken.column,
-				"expected '..' in range, got %v", p.curToken.literal)
+				"expected '..' in range, got %q", p.curToken.literal)
 		}
 		p.nextToken() // consume ..
 
@@ -486,7 +611,7 @@ func (p *parser) parseForTag() (Node, error) {
 
 		if p.curToken.typ != tokenRParen {
 			return nil, newParseError(p.curToken.line, p.curToken.column,
-				"expected ')', got %v", p.curToken.literal)
+				"expected ')', got %q", p.curToken.literal)
 		}
 		p.nextToken() // consume )
 
@@ -623,14 +748,14 @@ func (p *parser) parseAssignTag() (Node, error) {
 
 	if p.curToken.typ != tokenIdent {
 		return nil, newParseError(p.curToken.line, p.curToken.column,
-			"expected variable name, got %v", p.curToken.literal)
+			"expected variable name, got %q", p.curToken.literal)
 	}
 	varName := p.curToken.literal
 	p.nextToken()
 
 	if p.curToken.typ != tokenAssign {
 		return nil, newParseError(p.curToken.line, p.curToken.column,
-			"expected '=', got %v", p.curToken.literal)
+			"expected '=', got %q", p.curToken.literal)
 	}
 	p.nextToken()
 
@@ -658,7 +783,7 @@ func (p *parser) parseCaptureTag() (Node, error) {
 
 	if p.curToken.typ != tokenIdent {
 		return nil, newParseError(p.curToken.line, p.curToken.column,
-			"expected variable name, got %v", p.curToken.literal)
+			"expected variable name, got %q", p.curToken.literal)
 	}
 	varName := p.curToken.literal
 	p.nextToken()
@@ -795,7 +920,7 @@ func (p *parser) parseIncrementTag() (Node, error) {
 
 	if p.curToken.typ != tokenIdent {
 		return nil, newParseError(p.curToken.line, p.curToken.column,
-			"expected variable name, got %s", p.curToken.literal)
+			"expected variable name, got %q", p.curToken.literal)
 	}
 
 	varName := p.curToken.literal
@@ -819,7 +944,7 @@ func (p *parser) parseDecrementTag() (Node, error) {
 
 	if p.curToken.typ != tokenIdent {
 		return nil, newParseError(p.curToken.line, p.curToken.column,
-			"expected variable name, got %s", p.curToken.literal)
+			"expected variable name, got %q", p.curToken.literal)
 	}
 
 	varName := p.curToken.literal
@@ -846,7 +971,7 @@ func (p *parser) parsePartialTag(isolated bool) (Node, error) {
 
 	if p.curToken.typ != tokenString {
 		return nil, newParseError(p.curToken.line, p.curToken.column,
-			"expected partial name as string literal, got %v", p.curToken.literal)
+			"expected partial name as string literal, got %q", p.curToken.literal)
 	}
 	name := p.curToken.literal
 	p.nextToken()
@@ -872,7 +997,7 @@ func (p *parser) parsePartialTag(isolated bool) (Node, error) {
 			p.nextToken()
 			if p.curToken.typ != tokenIdent {
 				return nil, newParseError(p.curToken.line, p.curToken.column,
-					"expected alias after 'as', got %v", p.curToken.literal)
+					"expected alias after 'as', got %q", p.curToken.literal)
 			}
 			withAlias = p.curToken.literal
 			p.nextToken()
@@ -888,7 +1013,7 @@ func (p *parser) parsePartialTag(isolated bool) (Node, error) {
 			p.nextToken()
 			if p.curToken.typ != tokenIdent {
 				return nil, newParseError(p.curToken.line, p.curToken.column,
-					"expected alias after 'as', got %v", p.curToken.literal)
+					"expected alias after 'as', got %q", p.curToken.literal)
 			}
 			forAlias = p.curToken.literal
 			p.nextToken()
@@ -961,20 +1086,39 @@ func (p *parser) parseExpression() (Expression, error) {
 
 		if p.curToken.typ != tokenIdent {
 			return nil, newParseError(p.curToken.line, p.curToken.column,
-				"expected filter name, got %v", p.curToken.literal)
+				"expected filter name, got %q", p.curToken.literal)
 		}
 		filterName := p.curToken.literal
 		p.nextToken()
 
 		var args []Expression
+		var kwargs []NamedArg
 		if p.curToken.typ == tokenColon {
 			p.nextToken() // consume :
 			for {
-				arg, err := p.parseOr()
-				if err != nil {
-					return nil, err
+				// Peek for `IDENT :` — that's a named argument. Once we see
+				// the first kwarg, the rest of the args list must be kwargs
+				// (matching Shopify and avoiding interleave ambiguity).
+				if p.curToken.typ == tokenIdent && p.peekTokenIs(tokenColon) {
+					key := p.curToken.literal
+					p.nextToken() // consume key
+					p.nextToken() // consume :
+					val, err := p.parseOr()
+					if err != nil {
+						return nil, err
+					}
+					kwargs = append(kwargs, NamedArg{Name: key, Value: val})
+				} else {
+					if len(kwargs) > 0 {
+						return nil, newParseError(p.curToken.line, p.curToken.column,
+							"positional filter arg cannot follow named arg")
+					}
+					arg, err := p.parseOr()
+					if err != nil {
+						return nil, err
+					}
+					args = append(args, arg)
 				}
-				args = append(args, arg)
 				if p.curToken.typ != tokenComma {
 					break
 				}
@@ -986,6 +1130,7 @@ func (p *parser) parseExpression() (Expression, error) {
 			Input:  expr,
 			Name:   filterName,
 			Args:   args,
+			Kwargs: kwargs,
 			Line:   line,
 			Column: column,
 		}
@@ -1107,7 +1252,7 @@ func (p *parser) parsePrimary() (Expression, error) {
 
 			if p.curToken.typ != tokenIdent {
 				return nil, newParseError(p.curToken.line, p.curToken.column,
-					"expected property name, got %v", p.curToken.literal)
+					"expected property name, got %q", p.curToken.literal)
 			}
 			prop := p.curToken.literal
 			p.nextToken()
@@ -1125,7 +1270,7 @@ func (p *parser) parsePrimary() (Expression, error) {
 
 			if p.curToken.typ != tokenRBracket {
 				return nil, newParseError(p.curToken.line, p.curToken.column,
-					"expected ']', got %v", p.curToken.literal)
+					"expected ']', got %q", p.curToken.literal)
 			}
 			p.nextToken()
 			expr = &IndexExpr{Object: expr, Index: index, Line: line, Column: column}
@@ -1190,7 +1335,7 @@ func (p *parser) parseAtom() (Expression, error) {
 		}
 		if p.curToken.typ != tokenRParen {
 			return nil, newParseError(p.curToken.line, p.curToken.column,
-				"expected ')', got %v", p.curToken.literal)
+				"expected ')', got %q", p.curToken.literal)
 		}
 		p.nextToken()
 		return expr, nil
@@ -1209,11 +1354,11 @@ func (p *parser) parseAtom() (Expression, error) {
 			return &LiteralExpr{Value: value, Line: line, Column: column}, nil
 		}
 		return nil, newParseError(p.curToken.line, p.curToken.column,
-			"expected number after '-', got %v", p.curToken.literal)
+			"expected number after '-', got %q", p.curToken.literal)
 
 	default:
 		return nil, newParseError(line, column,
-			"unexpected token in expression: %v", p.curToken.literal)
+			"unexpected token in expression: %q", p.curToken.literal)
 	}
 }
 
@@ -1222,6 +1367,31 @@ func (p *parser) parseAtom() (Expression, error) {
 // `offset`, `reversed`) that are not globally reserved.
 func (p *parser) isWord(word string) bool {
 	return p.curToken.typ == tokenIdent && p.curToken.literal == word
+}
+
+// peekTokenIs reports whether the token immediately following curToken has
+// the given type. The lexer state is saved and restored exactly so callers
+// see no side effects.
+func (p *parser) peekTokenIs(typ TokenType) bool {
+	savedToken := p.curToken
+	savedPos := p.l.pos
+	savedReadPos := p.l.readPos
+	savedCh := p.l.ch
+	savedLine := p.l.line
+	savedCol := p.l.column
+	savedMode := p.l.mode
+
+	p.nextToken()
+	result := p.curToken.typ == typ
+
+	p.curToken = savedToken
+	p.l.pos = savedPos
+	p.l.readPos = savedReadPos
+	p.l.ch = savedCh
+	p.l.line = savedLine
+	p.l.column = savedCol
+	p.l.mode = savedMode
+	return result
 }
 
 // isTagKeyword peeks past `{%` (or `{%-`) to see whether the next token is
@@ -1260,7 +1430,7 @@ func (p *parser) isTagKeyword(word string) bool {
 func (p *parser) expectTagClose() error {
 	if p.curToken.typ != tokenTagClose && p.curToken.typ != tokenTagTrimR {
 		return newParseError(p.curToken.line, p.curToken.column,
-			"expected %%}, got %v", p.curToken.literal)
+			"expected %%}, got %q", p.curToken.literal)
 	}
 	p.trimNextText = p.curToken.typ == tokenTagTrimR
 	p.nextToken()
@@ -1273,7 +1443,7 @@ func (p *parser) expectTagClose() error {
 func (p *parser) validateTagClose() error {
 	if p.curToken.typ != tokenTagClose && p.curToken.typ != tokenTagTrimR {
 		return newParseError(p.curToken.line, p.curToken.column,
-			"expected %%}, got %v", p.curToken.literal)
+			"expected %%}, got %q", p.curToken.literal)
 	}
 	p.trimNextText = p.curToken.typ == tokenTagTrimR
 	// Don't call nextToken() - we'll scan raw content directly
