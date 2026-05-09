@@ -1,0 +1,67 @@
+{# data: {
+  "page": {"title": "Product Catalog", "description": "Browse our selection of rugby gear"},
+  "categories": [
+    {
+      "name": "Equipment",
+      "products": [
+        {"name": "Match Ball", "price": 45.00, "in_stock": true, "rating": 4.8},
+        {"name": "Training Ball", "price": 25.00, "in_stock": true, "rating": 4.5},
+        {"name": "Kicking Tee", "price": 15.00, "in_stock": false, "rating": 4.2}
+      ]
+    },
+    {
+      "name": "Apparel",
+      "products": [
+        {"name": "Team Jersey", "price": 65.00, "in_stock": true, "rating": 4.9},
+        {"name": "Training Shorts", "price": 30.00, "in_stock": true, "rating": 4.6}
+      ]
+    },
+    {
+      "name": "Protection",
+      "products": []
+    }
+  ],
+  "show_prices": true,
+  "currency": "USD"
+} #}
+<html>
+<head>
+  <title>{{ page.title | escape }}</title>
+  <meta name="description" content="{{ page.description | escape }}">
+</head>
+<body>
+  <h1>{{ page.title }}</h1>
+{% for category in categories %}
+  <section class="category{% cycle ' odd', ' even' %}">
+    <h2>{{ category.name }}</h2>
+{% if category.products.size == 0 %}
+    <p class="empty">No products in this category yet.</p>
+{% else %}
+    <ul class="products">
+{% for product in category.products %}
+      <li class="{% cycle 'row-light', 'row-dark' %}{% unless product.in_stock %} out-of-stock{% endunless %}">
+        <span class="name">{{ product.name }}</span>
+{% if show_prices %}
+        <span class="price">${{ product.price }}</span>
+{% endif %}
+        <span class="rating">{{ product.rating | round }} stars</span>
+{% if product.in_stock %}
+        <button>Add to Cart</button>
+{% else %}
+        <span class="unavailable">Out of Stock</span>
+{% endif %}
+      </li>
+{% endfor %}
+    </ul>
+    <p class="summary">
+      {{ category.products | where: "in_stock", true | size }} of {{ category.products.size }} items available
+    </p>
+{% endif %}
+  </section>
+{% endfor %}
+  <footer>
+    Total categories: {{ categories.size }}
+    Total products: {{ categories | map: "products" | flatten | size }}
+  </footer>
+</body>
+</html>

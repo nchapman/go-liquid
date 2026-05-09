@@ -1,0 +1,5 @@
+{# data: {"items": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]} #}
+limit:3 = {% for i in items limit:3 %}{{ i }} {% endfor %}
+offset:5 = {% for i in items offset:5 %}{{ i }} {% endfor %}
+limit:2 offset:3 = {% for i in items limit:2 offset:3 %}{{ i }} {% endfor %}
+reversed = {% for i in items reversed limit:4 %}{{ i }} {% endfor %}

@@ -1,0 +1,7 @@
+{# data: {"timestamp": "2024-03-15T14:30:00Z", "date_str": "2024-03-15"} #}
+full: {{ timestamp | date: "%Y-%m-%d %H:%M:%S" }}
+date only: {{ timestamp | date: "%Y-%m-%d" }}
+time only: {{ timestamp | date: "%H:%M" }}
+human: {{ timestamp | date: "%B %d, %Y" }}
+day of week: {{ timestamp | date: "%A" }}
+short: {{ timestamp | date: "%b %d" }}

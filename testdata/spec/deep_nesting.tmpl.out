@@ -1,0 +1,24 @@
+
+Department: Engineering
+
+  Team: Backend (2 members)
+
+    - Alice: [API] [Database]
+
+    - Bob: [Auth]
+
+
+  Team: Frontend (1 members)
+
+    - Carol: [UI] [UX] [Tests]
+
+
+
+Department: Design
+
+  Team: Product (1 members)
+
+    - Dan: [Mockups]
+
+
+

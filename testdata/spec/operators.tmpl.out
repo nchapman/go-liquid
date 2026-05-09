@@ -1,0 +1,10 @@
+a is 5
+a != b
+a < b
+b > a
+a <= 5
+b >= 10
+both true
+one true
+contains world
+contains 2

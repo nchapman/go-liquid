@@ -1,0 +1,17 @@
+No trim:
+
+a
+
+b
+
+c
+
+---
+With trim:abc---
+Mixed trim:
+a
+
+b
+
+c
+Done

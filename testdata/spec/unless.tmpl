@@ -1,0 +1,3 @@
+{# data: {"sold_out": false, "in_stock": true} #}
+{% unless sold_out %}Available for purchase{% endunless %}
+{% unless in_stock %}Out of stock{% else %}In stock{% endunless %}

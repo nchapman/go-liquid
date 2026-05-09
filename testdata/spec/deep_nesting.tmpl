@@ -1,0 +1,42 @@
+{# data: {
+  "departments": [
+    {
+      "name": "Engineering",
+      "teams": [
+        {
+          "name": "Backend",
+          "members": [
+            {"name": "Alice", "tasks": ["API", "Database"]},
+            {"name": "Bob", "tasks": ["Auth"]}
+          ]
+        },
+        {
+          "name": "Frontend",
+          "members": [
+            {"name": "Carol", "tasks": ["UI", "UX", "Tests"]}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Design",
+      "teams": [
+        {
+          "name": "Product",
+          "members": [
+            {"name": "Dan", "tasks": ["Mockups"]}
+          ]
+        }
+      ]
+    }
+  ]
+} #}
+{% for dept in departments %}
+Department: {{ dept.name }}
+{% for team in dept.teams %}
+  Team: {{ team.name }} ({{ team.members.size }} members)
+{% for member in team.members %}
+    - {{ member.name }}:{% for task in member.tasks %} [{{ task }}]{% endfor %}
+{% endfor %}
+{% endfor %}
+{% endfor %}

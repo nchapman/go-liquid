@@ -1,0 +1,18 @@
+{# data: {} #}
+Increment (starts at 0, outputs then increments):
+{% increment counter %}
+{% increment counter %}
+{% increment counter %}
+
+Multiple counters:
+a={% increment a %} b={% increment b %} a={% increment a %} b={% increment b %}
+
+Decrement (starts at 0, decrements then outputs):
+{% decrement down %}
+{% decrement down %}
+{% decrement down %}
+
+Mixed:
+{% increment mix %}
+{% decrement mix %}
+{% increment mix %}

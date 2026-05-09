@@ -1,0 +1,140 @@
+// Package liquid is a pure-Go implementation of the Liquid template language.
+//
+// Liquid is a safe, customer-facing template language created by Shopify and
+// widely used in static site generators (Jekyll, Hugo's Liquid mode), e-commerce
+// platforms, and configuration tooling. This package implements the standard
+// Liquid syntax — output ({{ ... }}), tags ({% ... %}), filters, control flow,
+// and loops — with full whitespace control ({%- -%}, {{- -}}).
+//
+// Quick start:
+//
+//	out, err := liquid.Render("Hello, {{ name }}!", map[string]any{"name": "World"})
+//	// out == "Hello, World!"
+//
+// Parse once, render many times:
+//
+//	tmpl, err := liquid.Parse("{% for x in items %}{{ x }}{% endfor %}")
+//	if err != nil { ... }
+//	out, _ := tmpl.Render(map[string]any{"items": []int{1, 2, 3}})
+//
+// Streaming output:
+//
+//	tmpl.RenderTo(w, data)
+//
+// Data may be a map[string]any, any other map keyed by a stringable type, or a
+// struct. Struct fields and zero-arg methods are accessible via dot notation.
+package liquid
+
+import (
+	"io"
+	"reflect"
+)
+
+// Template is a parsed Liquid template. Templates are safe to render
+// concurrently from multiple goroutines.
+type Template struct {
+	ast *templateAST
+}
+
+// Parse parses a Liquid template source string.
+func Parse(source string) (*Template, error) {
+	p := newParser(source)
+	ast, err := p.parse()
+	if err != nil {
+		return nil, err
+	}
+	return &Template{ast: ast}, nil
+}
+
+// MustParse is like Parse but panics on error. Use for templates known at
+// program start (e.g. embedded with //go:embed).
+func MustParse(source string) *Template {
+	t, err := Parse(source)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
+// Render executes the template against data and returns the rendered string.
+func (t *Template) Render(data any) (string, error) {
+	eval := newEvaluator(toStringMap(data))
+	return eval.evaluate(t.ast)
+}
+
+// RenderTo executes the template against data and writes the result to w.
+func (t *Template) RenderTo(w io.Writer, data any) error {
+	out, err := t.Render(data)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, out)
+	return err
+}
+
+// Render parses and executes a template in one call. For templates rendered
+// repeatedly, prefer Parse + (*Template).Render to avoid re-parsing.
+func Render(source string, data any) (string, error) {
+	t, err := Parse(source)
+	if err != nil {
+		return "", err
+	}
+	return t.Render(data)
+}
+
+// MustRender is like Render but panics on parse or render error.
+func MustRender(source string, data any) string {
+	out, err := Render(source, data)
+	if err != nil {
+		panic(err)
+	}
+	return out
+}
+
+// RegisterFilter installs a custom filter under the given name. It overrides
+// any built-in filter with the same name. Not safe to call concurrently with
+// rendering.
+func RegisterFilter(name string, fn FilterFunc) {
+	filters[name] = fn
+}
+
+// toStringMap normalizes user-provided data into the map[string]any shape the
+// evaluator expects at the top level. Structs are passed through — getProperty
+// handles them via reflection during evaluation.
+func toStringMap(data any) map[string]any {
+	if data == nil {
+		return map[string]any{}
+	}
+	if m, ok := data.(map[string]any); ok {
+		return m
+	}
+	rv := reflect.ValueOf(data)
+	for rv.Kind() == reflect.Pointer {
+		rv = rv.Elem()
+	}
+	switch rv.Kind() {
+	case reflect.Map:
+		out := make(map[string]any, rv.Len())
+		iter := rv.MapRange()
+		for iter.Next() {
+			out[toString(iter.Key().Interface())] = iter.Value().Interface()
+		}
+		return out
+	case reflect.Struct:
+		out := make(map[string]any, rv.NumField())
+		t := rv.Type()
+		for i := 0; i < rv.NumField(); i++ {
+			f := t.Field(i)
+			if !f.IsExported() {
+				continue
+			}
+			name := f.Name
+			if tag := f.Tag.Get("liquid"); tag != "" {
+				name = tag
+			}
+			out[name] = rv.Field(i).Interface()
+		}
+		return out
+	}
+	return map[string]any{}
+}

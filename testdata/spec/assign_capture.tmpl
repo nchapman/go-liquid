@@ -1,0 +1,6 @@
+{# data: {"name": "World"} #}
+{% assign greeting = "Hello" %}
+{{ greeting }}, {{ name }}!
+
+{% capture full_greeting %}Welcome to {{ name }}!{% endcapture %}
+{{ full_greeting }}

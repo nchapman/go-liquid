@@ -1,0 +1,4 @@
+{# data: {"items": ["a", "b", "c"]} #}
+{% for item in items %}
+- {{ item }}: index={{ forloop.index }}, index0={{ forloop.index0 }}, first={{ forloop.first }}, last={{ forloop.last }}, length={{ forloop.length }}, rindex={{ forloop.rindex }}, rindex0={{ forloop.rindex0 }}
+{% endfor %}

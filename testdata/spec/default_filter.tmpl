@@ -1,0 +1,5 @@
+{# data: {"name": "Alice", "empty_str": "", "zero": 0} #}
+{{ name | default: "Unknown" }}
+{{ missing | default: "Not found" }}
+{{ empty_str | default: "Was empty" }}
+{{ zero | default: "Was zero" }}

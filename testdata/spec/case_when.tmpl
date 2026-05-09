@@ -1,0 +1,7 @@
+{# data: {"color": "blue"} #}
+{% case color %}
+{% when "red" %}Stop
+{% when "yellow" %}Caution
+{% when "green" %}Go
+{% else %}Unknown color: {{ color }}
+{% endcase %}

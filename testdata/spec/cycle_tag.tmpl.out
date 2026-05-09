@@ -1,0 +1,32 @@
+Basic cycle:
+
+a: odd
+
+b: even
+
+c: odd
+
+d: even
+
+e: odd
+
+Named cycles:
+
+a: row-1 col-A
+
+b: row-2 col-B
+
+c: row-3 col-A
+
+d: row-1 col-B
+
+e: row-2 col-A
+
+Cycle resets per loop:
+
+Loop 1: x y
+
+Loop 2: x y
+
+Loop 3: x y
+

@@ -1,0 +1,5 @@
+{# data: {"text": "Hello World", "padded": "  spaces  "} #}
+{{ text | upcase }}
+{{ text | downcase }}
+{{ padded | strip }}
+{{ "<script>alert('xss')</script>" | escape }}

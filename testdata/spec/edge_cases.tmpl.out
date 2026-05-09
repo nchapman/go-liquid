@@ -1,0 +1,26 @@
+Nil handling:
+nil default: fallback
+nil size: 0
+nil in if: no
+
+Empty handling:
+empty str default: fallback
+empty arr size: 0
+empty arr first: []
+for empty: empty
+
+Falsy vs empty:
+zero is falsy: yes
+zero default: 0
+false is falsy: no
+blank check: blank
+empty check: empty
+
+Deep access:
+nested: deep
+missing: []
+missing chain: []
+
+Type coercion:
+string to num: 8
+num to string: 42!

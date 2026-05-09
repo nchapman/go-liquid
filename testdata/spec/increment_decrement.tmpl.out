@@ -1,0 +1,17 @@
+Increment (starts at 0, outputs then increments):
+0
+1
+2
+
+Multiple counters:
+a=0 b=0 a=1 b=1
+
+Decrement (starts at 0, decrements then outputs):
+-1
+-2
+-3
+
+Mixed:
+0
+0
+0

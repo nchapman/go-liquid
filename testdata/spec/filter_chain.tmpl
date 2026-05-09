@@ -1,0 +1,4 @@
+{# data: {"text": "  hello world  ", "items": ["x", "y", "z"]} #}
+{{ text | strip | upcase }}
+{{ items | reverse | first }}
+{{ items | join: "-" | upcase }}

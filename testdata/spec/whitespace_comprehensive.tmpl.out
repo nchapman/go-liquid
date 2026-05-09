@@ -1,0 +1,139 @@
+=== FOR LOOP TRIM MARKERS ===
+
+1. No trim (baseline):
+
+[a]
+
+[b]
+
+[c]
+
+END
+
+2. Left trim on opening tag:
+[a]
+
+[b]
+
+[c]
+
+END
+
+3. Right trim on opening tag:
+[a]
+[b]
+[c]
+
+END
+
+4. Both trims on opening tag:[a]
+[b]
+[c]
+
+END
+
+5. Left trim on closing tag:
+
+[a]
+[b]
+[c]
+END
+
+6. Right trim on closing tag:
+
+[a]
+
+[b]
+
+[c]
+END
+
+7. Full trim (all markers):[a][b][c]END
+
+=== OUTPUT TRIM MARKERS ===
+
+8. No trim output:
+Hello World there
+END
+
+9. Left trim output:
+HelloWorld there
+END
+
+10. Right trim output:
+Hello Worldthere
+END
+
+11. Both trim output:
+HelloWorldthere
+END
+
+=== IF STATEMENT TRIM ===
+
+12. No trim if:
+
+visible
+
+END
+
+13. Full trim if:visibleEND
+
+14. Trim with else:yesEND
+
+=== UNLESS TRIM ===
+
+15. Full trim unless:shownEND
+
+=== CASE TRIM ===
+
+16. Full trim case:ACTIVEEND
+
+=== ASSIGN TRIM ===
+
+17. No trim assign:
+
+hello
+END
+
+18. Full trim assign:world
+END
+
+=== CAPTURE TRIM ===
+
+19. No trim capture:
+
+[
+Hello there!
+]
+END
+
+20. Full trim capture:[Trimmed message]
+END
+
+=== NESTED LOOPS ===
+
+21. Nested with mixed trim:(aa)(ab)(ac)(ba)(bb)(bc)(ca)(cb)(cc)END
+
+=== CONSECUTIVE TAGS ===
+
+22. Multiple tags in sequence:123
+END
+
+=== EDGE CASES ===
+
+23. Trim at start of template:begin
+
+24. Empty loop with trim:(nothing)
+
+25. Property access with trim:AliceEND
+
+=== RAW/COMMENT TRIM ===
+
+26. Raw with closing trim:
+literal {{ text }}
+END
+
+27. Comment with closing trim:
+BEFOREAFTER
+
+=== DONE ===

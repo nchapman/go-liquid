@@ -1,0 +1,16 @@
+{# data: {"a": 10, "b": 3, "neg": -5, "pi": 3.14159, "val": 7} #}
+times: {{ a | times: b }}
+divided_by int: {{ a | divided_by: b }}
+divided_by float: {{ a | divided_by: 3.1 }}
+modulo: {{ a | modulo: b }}
+abs positive: {{ a | abs }}
+abs negative: {{ neg | abs }}
+round: {{ pi | round }}
+round precision: {{ pi | round: 2 }}
+ceil: {{ pi | ceil }}
+floor: {{ pi | floor }}
+at_least (val=7, min=5): {{ val | at_least: 5 }}
+at_least (val=7, min=10): {{ val | at_least: 10 }}
+at_most (val=7, max=10): {{ val | at_most: 10 }}
+at_most (val=7, max=5): {{ val | at_most: 5 }}
+chained: {{ neg | abs | times: 2 | plus: 1 }}

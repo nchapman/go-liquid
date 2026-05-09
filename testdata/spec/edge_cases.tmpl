@@ -1,0 +1,35 @@
+{# data: {
+  "nil_val": null,
+  "empty_str": "",
+  "empty_arr": [],
+  "zero": 0,
+  "false_val": false,
+  "whitespace": "   ",
+  "nested": {"a": {"b": {"c": "deep"}}}
+} #}
+Nil handling:
+nil default: {{ nil_val | default: "fallback" }}
+nil size: {{ nil_val | size }}
+nil in if: {% if nil_val %}yes{% else %}no{% endif %}
+
+Empty handling:
+empty str default: {{ empty_str | default: "fallback" }}
+empty arr size: {{ empty_arr | size }}
+empty arr first: [{{ empty_arr | first }}]
+for empty: {% for x in empty_arr %}item{% else %}empty{% endfor %}
+
+Falsy vs empty:
+zero is falsy: {% if zero %}yes{% else %}no{% endif %}
+zero default: {{ zero | default: "fallback" }}
+false is falsy: {% if false_val %}yes{% else %}no{% endif %}
+blank check: {% if whitespace == blank %}blank{% else %}not blank{% endif %}
+empty check: {% if empty_arr == empty %}empty{% else %}not empty{% endif %}
+
+Deep access:
+nested: {{ nested.a.b.c }}
+missing: [{{ nested.a.b.missing }}]
+missing chain: [{{ nested.x.y.z }}]
+
+Type coercion:
+string to num: {{ "5" | plus: 3 }}
+num to string: {{ 42 | append: "!" }}

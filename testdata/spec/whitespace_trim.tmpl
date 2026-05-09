@@ -1,0 +1,16 @@
+{# data: {"items": ["a", "b", "c"]} #}
+No trim:
+{% for item in items %}
+{{ item }}
+{% endfor %}
+---
+With trim:
+{%- for item in items -%}
+{{ item }}
+{%- endfor -%}
+---
+Mixed trim:
+{%- for item in items %}
+{{ item }}
+{% endfor -%}
+Done

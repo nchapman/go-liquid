@@ -1,0 +1,15 @@
+split: hello | world | foo | bar
+append: Alice Smith
+prepend: Ms. Alice
+replace: hello - world - foo - bar
+replace_first: hello:world,foo,bar
+remove: helloworldfoobar
+remove_first: helloworld,foo,bar
+truncate: The quick brown f...
+truncate custom: The quick brown f...
+truncatewords: The quick brown fox...
+slice str: Ali
+slice negative: ice
+lstrip: [hello  ]
+rstrip: [  hello]
+newline_to_br: line1<br />line2<br />line3

@@ -1,0 +1,16 @@
+{# data: {"text": "hello,world,foo,bar", "name": "Alice", "long_text": "The quick brown fox jumps over the lazy dog", "multiline": "line1\nline2\nline3"} #}
+split: {{ text | split: "," | join: " | " }}
+append: {{ name | append: " Smith" }}
+prepend: {{ name | prepend: "Ms. " }}
+replace: {{ text | replace: ",", " - " }}
+replace_first: {{ text | replace_first: ",", ":" }}
+remove: {{ text | remove: "," }}
+remove_first: {{ text | remove_first: "," }}
+truncate: {{ long_text | truncate: 20 }}
+truncate custom: {{ long_text | truncate: 20, "..." }}
+truncatewords: {{ long_text | truncatewords: 4 }}
+slice str: {{ name | slice: 0, 3 }}
+slice negative: {{ name | slice: -3, 3 }}
+lstrip: [{{ "  hello  " | lstrip }}]
+rstrip: [{{ "  hello  " | rstrip }}]
+newline_to_br: {{ multiline | newline_to_br }}

@@ -1,0 +1,100 @@
+<html>
+<head>
+  <title>Product Catalog</title>
+  <meta name="description" content="Browse our selection of rugby gear">
+</head>
+<body>
+  <h1>Product Catalog</h1>
+
+  <section class="category odd">
+    <h2>Equipment</h2>
+
+    <ul class="products">
+
+      <li class="row-light">
+        <span class="name">Match Ball</span>
+
+        <span class="price">$45</span>
+
+        <span class="rating">5 stars</span>
+
+        <button>Add to Cart</button>
+
+      </li>
+
+      <li class="row-dark">
+        <span class="name">Training Ball</span>
+
+        <span class="price">$25</span>
+
+        <span class="rating">5 stars</span>
+
+        <button>Add to Cart</button>
+
+      </li>
+
+      <li class="row-light out-of-stock">
+        <span class="name">Kicking Tee</span>
+
+        <span class="price">$15</span>
+
+        <span class="rating">4 stars</span>
+
+        <span class="unavailable">Out of Stock</span>
+
+      </li>
+
+    </ul>
+    <p class="summary">
+      2 of 3 items available
+    </p>
+
+  </section>
+
+  <section class="category even">
+    <h2>Apparel</h2>
+
+    <ul class="products">
+
+      <li class="row-dark">
+        <span class="name">Team Jersey</span>
+
+        <span class="price">$65</span>
+
+        <span class="rating">5 stars</span>
+
+        <button>Add to Cart</button>
+
+      </li>
+
+      <li class="row-light">
+        <span class="name">Training Shorts</span>
+
+        <span class="price">$30</span>
+
+        <span class="rating">5 stars</span>
+
+        <button>Add to Cart</button>
+
+      </li>
+
+    </ul>
+    <p class="summary">
+      2 of 2 items available
+    </p>
+
+  </section>
+
+  <section class="category odd">
+    <h2>Protection</h2>
+
+    <p class="empty">No products in this category yet.</p>
+
+  </section>
+
+  <footer>
+    Total categories: 3
+    Total products: 5
+  </footer>
+</body>
+</html>
