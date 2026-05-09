@@ -200,3 +200,60 @@ func TestFileSystemLoaderErrorDoesNotLeakPath(t *testing.T) {
 		t.Fatalf("expected errors.Is(err, fs.ErrNotExist), got %v", err)
 	}
 }
+
+func TestFormerKeywordsUsableAsVariables(t *testing.T) {
+	// Every word that used to be a globally-reserved token type should now be
+	// a usable identifier in expression position. Tag names are still reserved
+	// at the structural position (immediately after `{%`).
+	cases := []string{
+		"raw", "comment", "cycle", "render", "include", "capture",
+		"if", "unless", "case", "when", "for", "break", "continue", "assign",
+		"increment", "decrement", "elsif", "else", "endif", "endfor",
+		"limit", "offset", "reversed", "with", "as", "in",
+	}
+	for _, w := range cases {
+		t.Run(w, func(t *testing.T) {
+			out, err := Render("{{ "+w+" }}", map[string]any{w: "X"})
+			if err != nil {
+				t.Fatalf("Render({{ %s }}): %v", w, err)
+			}
+			if out != "X" {
+				t.Fatalf("{{ %s }} got %q, want X", w, out)
+			}
+		})
+	}
+}
+
+func TestFormerKeywordsAsForLoopVariable(t *testing.T) {
+	out, err := Render(`{% for if in items %}{{ if }}{% endfor %}`,
+		map[string]any{"items": []any{1, 2, 3}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "123" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestFormerKeywordsAsAssignTarget(t *testing.T) {
+	out, err := Render(`{% assign comment = 5 %}{% assign cycle = 7 %}{{ comment | plus: cycle }}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "12" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestExpressionKeywordsStillReserved(t *testing.T) {
+	// true/false/nil/empty/blank/and/or/contains keep their meanings; trying
+	// to assign to them or use them as variable values must not silently
+	// shadow the literal.
+	out, err := Render(`{% if true %}T{% endif %}-{% if false %}F{% else %}else{% endif %}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "T-else" {
+		t.Fatalf("got %q", out)
+	}
+}

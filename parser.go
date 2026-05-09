@@ -156,44 +156,50 @@ func (p *parser) parseTagWithTrim() (Node, bool, error) {
 	return node, p.trimNextText, err
 }
 
+// parseTag dispatches a tag by name. Tag names are not globally reserved
+// tokens; the lexer emits them as plain identifiers. They are recognized
+// only here, immediately after `{%`.
 func (p *parser) parseTag() (Node, error) {
 	p.nextToken() // consume {% or {%-
 
-	switch p.curToken.typ {
-	case tokenIf:
-		return p.parseIfTag()
-	case tokenUnless:
-		return p.parseUnlessTag()
-	case tokenCase:
-		return p.parseCaseTag()
-	case tokenFor:
-		return p.parseForTag()
-	case tokenBreak:
-		return p.parseBreakTag()
-	case tokenContinue:
-		return p.parseContinueTag()
-	case tokenAssignTag:
-		return p.parseAssignTag()
-	case tokenCapture:
-		return p.parseCaptureTag()
-	case tokenComment:
-		return p.parseCommentTag()
-	case tokenRaw:
-		return p.parseRawTag()
-	case tokenCycle:
-		return p.parseCycleTag()
-	case tokenIncrement:
-		return p.parseIncrementTag()
-	case tokenDecrement:
-		return p.parseDecrementTag()
-	case tokenRender:
-		return p.parsePartialTag(true)
-	case tokenInclude:
-		return p.parsePartialTag(false)
-	default:
+	if p.curToken.typ != tokenIdent {
 		return nil, newParseError(p.curToken.line, p.curToken.column,
-			"unknown tag: %s", p.curToken.literal)
+			"expected tag name, got %v", p.curToken.literal)
 	}
+	switch p.curToken.literal {
+	case "if":
+		return p.parseIfTag()
+	case "unless":
+		return p.parseUnlessTag()
+	case "case":
+		return p.parseCaseTag()
+	case "for":
+		return p.parseForTag()
+	case "break":
+		return p.parseBreakTag()
+	case "continue":
+		return p.parseContinueTag()
+	case "assign":
+		return p.parseAssignTag()
+	case "capture":
+		return p.parseCaptureTag()
+	case "comment":
+		return p.parseCommentTag()
+	case "raw":
+		return p.parseRawTag()
+	case "cycle":
+		return p.parseCycleTag()
+	case "increment":
+		return p.parseIncrementTag()
+	case "decrement":
+		return p.parseDecrementTag()
+	case "render":
+		return p.parsePartialTag(true)
+	case "include":
+		return p.parsePartialTag(false)
+	}
+	return nil, newParseError(p.curToken.line, p.curToken.column,
+		"unknown tag: %s", p.curToken.literal)
 }
 
 func (p *parser) parseIfTag() (Node, error) {
@@ -219,14 +225,14 @@ func (p *parser) parseIfTag() (Node, error) {
 
 	// Parse then branch
 	tag.ThenBranch, err = p.parseNodes(func() bool {
-		return p.isTagKeyword(tokenElsif) || p.isTagKeyword(tokenElse) || p.isTagKeyword(tokenEndif)
+		return p.isTagKeyword("elsif") || p.isTagKeyword("else") || p.isTagKeyword("endif")
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	// Parse elsif branches
-	for p.isTagKeyword(tokenElsif) {
+	for p.isTagKeyword("elsif") {
 		p.nextToken() // consume {%
 		p.nextToken() // consume elsif
 
@@ -243,7 +249,7 @@ func (p *parser) parseIfTag() (Node, error) {
 
 		var elsifBody []Node
 		elsifBody, err = p.parseNodes(func() bool {
-			return p.isTagKeyword(tokenElsif) || p.isTagKeyword(tokenElse) || p.isTagKeyword(tokenEndif)
+			return p.isTagKeyword("elsif") || p.isTagKeyword("else") || p.isTagKeyword("endif")
 		})
 		if err != nil {
 			return nil, err
@@ -256,7 +262,7 @@ func (p *parser) parseIfTag() (Node, error) {
 	}
 
 	// Parse else branch
-	if p.isTagKeyword(tokenElse) {
+	if p.isTagKeyword("else") {
 		p.nextToken() // consume {%
 		p.nextToken() // consume else
 
@@ -266,7 +272,7 @@ func (p *parser) parseIfTag() (Node, error) {
 		}
 
 		tag.ElseBranch, err = p.parseNodes(func() bool {
-			return p.isTagKeyword(tokenEndif)
+			return p.isTagKeyword("endif")
 		})
 		if err != nil {
 			return nil, err
@@ -274,7 +280,7 @@ func (p *parser) parseIfTag() (Node, error) {
 	}
 
 	// Consume endif
-	if !p.isTagKeyword(tokenEndif) {
+	if !p.isTagKeyword("endif") {
 		return nil, newParseError(p.curToken.line, p.curToken.column, "expected endif")
 	}
 	p.nextToken() // consume {%
@@ -309,14 +315,14 @@ func (p *parser) parseUnlessTag() (Node, error) {
 
 	// Parse body
 	tag.Body, err = p.parseNodes(func() bool {
-		return p.isTagKeyword(tokenElse) || p.isTagKeyword(tokenEndunless)
+		return p.isTagKeyword("else") || p.isTagKeyword("endunless")
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	// Parse else branch
-	if p.isTagKeyword(tokenElse) {
+	if p.isTagKeyword("else") {
 		p.nextToken() // consume {%
 		p.nextToken() // consume else
 
@@ -326,7 +332,7 @@ func (p *parser) parseUnlessTag() (Node, error) {
 		}
 
 		tag.ElseBranch, err = p.parseNodes(func() bool {
-			return p.isTagKeyword(tokenEndunless)
+			return p.isTagKeyword("endunless")
 		})
 		if err != nil {
 			return nil, err
@@ -334,7 +340,7 @@ func (p *parser) parseUnlessTag() (Node, error) {
 	}
 
 	// Consume endunless
-	if !p.isTagKeyword(tokenEndunless) {
+	if !p.isTagKeyword("endunless") {
 		return nil, newParseError(p.curToken.line, p.curToken.column, "expected endunless")
 	}
 	p.nextToken() // consume {%
@@ -374,7 +380,7 @@ func (p *parser) parseCaseTag() (Node, error) {
 	}
 
 	// Parse when clauses
-	for p.isTagKeyword(tokenWhen) {
+	for p.isTagKeyword("when") {
 		p.nextToken() // consume {%
 		p.nextToken() // consume when
 
@@ -400,7 +406,7 @@ func (p *parser) parseCaseTag() (Node, error) {
 
 		var body []Node
 		body, err = p.parseNodes(func() bool {
-			return p.isTagKeyword(tokenWhen) || p.isTagKeyword(tokenElse) || p.isTagKeyword(tokenEndcase)
+			return p.isTagKeyword("when") || p.isTagKeyword("else") || p.isTagKeyword("endcase")
 		})
 		if err != nil {
 			return nil, err
@@ -410,7 +416,7 @@ func (p *parser) parseCaseTag() (Node, error) {
 	}
 
 	// Parse else
-	if p.isTagKeyword(tokenElse) {
+	if p.isTagKeyword("else") {
 		p.nextToken() // consume {%
 		p.nextToken() // consume else
 
@@ -420,7 +426,7 @@ func (p *parser) parseCaseTag() (Node, error) {
 		}
 
 		tag.Else, err = p.parseNodes(func() bool {
-			return p.isTagKeyword(tokenEndcase)
+			return p.isTagKeyword("endcase")
 		})
 		if err != nil {
 			return nil, err
@@ -428,7 +434,7 @@ func (p *parser) parseCaseTag() (Node, error) {
 	}
 
 	// Consume endcase
-	if !p.isTagKeyword(tokenEndcase) {
+	if !p.isTagKeyword("endcase") {
 		return nil, newParseError(p.curToken.line, p.curToken.column, "expected endcase")
 	}
 	p.nextToken() // consume {%
@@ -452,7 +458,7 @@ func (p *parser) parseForTag() (Node, error) {
 	varName := p.curToken.literal
 	p.nextToken()
 
-	if p.curToken.typ != tokenIn {
+	if !p.isWord("in") {
 		return nil, newParseError(p.curToken.line, p.curToken.column,
 			"expected 'in', got %v", p.curToken.literal)
 	}
@@ -505,41 +511,42 @@ func (p *parser) parseForTag() (Node, error) {
 		Column:     column,
 	}
 
-	// Parse optional parameters: limit, offset, reversed
+	// Optional parameters: limit, offset, reversed. These are recognized
+	// contextually (by literal) so they remain valid variable names elsewhere.
+ParamLoop:
 	for {
-		switch p.curToken.typ {
-		case tokenLimit:
-			p.nextToken() // consume 'limit'
+		switch {
+		case p.isWord("limit"):
+			p.nextToken()
 			if p.curToken.typ != tokenColon {
 				return nil, newParseError(p.curToken.line, p.curToken.column,
 					"expected ':' after limit")
 			}
-			p.nextToken() // consume ':'
+			p.nextToken()
 			limit, err := p.parsePrimary()
 			if err != nil {
 				return nil, err
 			}
 			tag.Limit = limit
-		case tokenOffset:
-			p.nextToken() // consume 'offset'
+		case p.isWord("offset"):
+			p.nextToken()
 			if p.curToken.typ != tokenColon {
 				return nil, newParseError(p.curToken.line, p.curToken.column,
 					"expected ':' after offset")
 			}
-			p.nextToken() // consume ':'
+			p.nextToken()
 			offset, err := p.parsePrimary()
 			if err != nil {
 				return nil, err
 			}
 			tag.Offset = offset
-		case tokenReversed:
-			p.nextToken() // consume 'reversed'
+		case p.isWord("reversed"):
+			p.nextToken()
 			tag.Reversed = true
 		default:
-			goto doneParams
+			break ParamLoop
 		}
 	}
-doneParams:
 
 	if err := p.expectTagClose(); err != nil {
 		return nil, err
@@ -547,14 +554,14 @@ doneParams:
 
 	var err error
 	tag.Body, err = p.parseNodes(func() bool {
-		return p.isTagKeyword(tokenElse) || p.isTagKeyword(tokenEndfor)
+		return p.isTagKeyword("else") || p.isTagKeyword("endfor")
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	// Parse else branch (for empty collection)
-	if p.isTagKeyword(tokenElse) {
+	if p.isTagKeyword("else") {
 		p.nextToken() // consume {%
 		p.nextToken() // consume else
 
@@ -564,7 +571,7 @@ doneParams:
 		}
 
 		tag.ElseBody, err = p.parseNodes(func() bool {
-			return p.isTagKeyword(tokenEndfor)
+			return p.isTagKeyword("endfor")
 		})
 		if err != nil {
 			return nil, err
@@ -572,7 +579,7 @@ doneParams:
 	}
 
 	// Consume endfor
-	if !p.isTagKeyword(tokenEndfor) {
+	if !p.isTagKeyword("endfor") {
 		return nil, newParseError(p.curToken.line, p.curToken.column, "expected endfor")
 	}
 	p.nextToken() // consume {%
@@ -661,14 +668,14 @@ func (p *parser) parseCaptureTag() (Node, error) {
 	}
 
 	body, err := p.parseNodes(func() bool {
-		return p.isTagKeyword(tokenEndcapture)
+		return p.isTagKeyword("endcapture")
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	// Consume endcapture
-	if !p.isTagKeyword(tokenEndcapture) {
+	if !p.isTagKeyword("endcapture") {
 		return nil, newParseError(p.curToken.line, p.curToken.column, "expected endcapture")
 	}
 	p.nextToken() // consume {%
@@ -850,18 +857,18 @@ func (p *parser) parsePartialTag(isolated bool) (Node, error) {
 		args                  []NamedArg
 	)
 
-	// Optional `with EXPR [as ALIAS]` or `for EXPR [as ALIAS]`. The keywords
-	// are recognized contextually (by literal) so they remain usable as
-	// variable names elsewhere in templates.
+	// Optional `with EXPR [as ALIAS]` or `for EXPR [as ALIAS]`. These
+	// keywords are recognized contextually so they remain usable as variable
+	// names elsewhere.
 	switch {
-	case p.isKeywordIdent("with"):
+	case p.isWord("with"):
 		p.nextToken()
 		expr, err := p.parsePrimary()
 		if err != nil {
 			return nil, err
 		}
 		withExpr = expr
-		if p.isKeywordIdent("as") {
+		if p.isWord("as") {
 			p.nextToken()
 			if p.curToken.typ != tokenIdent {
 				return nil, newParseError(p.curToken.line, p.curToken.column,
@@ -870,14 +877,14 @@ func (p *parser) parsePartialTag(isolated bool) (Node, error) {
 			withAlias = p.curToken.literal
 			p.nextToken()
 		}
-	case p.isKeywordIdent("for"), p.curToken.typ == tokenFor:
+	case p.isWord("for"):
 		p.nextToken()
 		expr, err := p.parsePrimary()
 		if err != nil {
 			return nil, err
 		}
 		forExpr = expr
-		if p.isKeywordIdent("as") {
+		if p.isWord("as") {
 			p.nextToken()
 			if p.curToken.typ != tokenIdent {
 				return nil, newParseError(p.curToken.line, p.curToken.column,
@@ -1217,20 +1224,22 @@ func (p *parser) parseAtom() (Expression, error) {
 	}
 }
 
-// isKeywordIdent reports whether the current token is an identifier with the
-// given literal text. Used for context-sensitive keywords like `with` and
-// `as` that are not reserved globally.
-func (p *parser) isKeywordIdent(word string) bool {
+// isWord reports whether the current token is the identifier `word`. Used
+// to recognize context-sensitive keywords (`in`, `with`, `as`, `limit`,
+// `offset`, `reversed`) that are not globally reserved.
+func (p *parser) isWord(word string) bool {
 	return p.curToken.typ == tokenIdent && p.curToken.literal == word
 }
 
-// isTagKeyword checks if the current position is at a tag with the given keyword.
-func (p *parser) isTagKeyword(keyword TokenType) bool {
+// isTagKeyword peeks past `{%` (or `{%-`) to see whether the next token is
+// the identifier `word`. Used to detect end-of-block markers like `endif`,
+// `endfor`, `else`, `when` from within a parseNodes loop without consuming
+// the tag delimiter. The lexer state is saved and restored exactly.
+func (p *parser) isTagKeyword(word string) bool {
 	if p.curToken.typ != tokenTagOpen && p.curToken.typ != tokenTagTrim {
 		return false
 	}
 
-	// Save state
 	savedToken := p.curToken
 	savedPos := p.l.pos
 	savedReadPos := p.l.readPos
@@ -1240,9 +1249,8 @@ func (p *parser) isTagKeyword(keyword TokenType) bool {
 	savedMode := p.l.mode
 
 	p.nextToken()
-	result := p.curToken.typ == keyword
+	result := p.curToken.typ == tokenIdent && p.curToken.literal == word
 
-	// Restore state
 	p.curToken = savedToken
 	p.l.pos = savedPos
 	p.l.readPos = savedReadPos
