@@ -186,6 +186,10 @@ func (p *parser) parseTag() (Node, error) {
 		return p.parseIncrementTag()
 	case tokenDecrement:
 		return p.parseDecrementTag()
+	case tokenRender:
+		return p.parsePartialTag(true)
+	case tokenInclude:
+		return p.parsePartialTag(false)
 	default:
 		return nil, newParseError(p.curToken.line, p.curToken.column,
 			"unknown tag: %s", p.curToken.literal)
@@ -825,6 +829,116 @@ func (p *parser) parseDecrementTag() (Node, error) {
 	}, nil
 }
 
+// parsePartialTag parses {% render %} or {% include %}. When isolated is
+// true the tag is render (isolated scope); otherwise it is include
+// (inherits parent scope).
+func (p *parser) parsePartialTag(isolated bool) (Node, error) {
+	line := p.curToken.line
+	column := p.curToken.column
+	p.nextToken() // consume render/include
+
+	if p.curToken.typ != tokenString {
+		return nil, newParseError(p.curToken.line, p.curToken.column,
+			"expected partial name as string literal, got %v", p.curToken.literal)
+	}
+	name := p.curToken.literal
+	p.nextToken()
+
+	var (
+		withExpr, forExpr     Expression
+		withAlias, forAlias   string
+		args                  []NamedArg
+	)
+
+	// Optional `with EXPR [as ALIAS]` or `for EXPR [as ALIAS]`. The keywords
+	// are recognized contextually (by literal) so they remain usable as
+	// variable names elsewhere in templates.
+	switch {
+	case p.isKeywordIdent("with"):
+		p.nextToken()
+		expr, err := p.parsePrimary()
+		if err != nil {
+			return nil, err
+		}
+		withExpr = expr
+		if p.isKeywordIdent("as") {
+			p.nextToken()
+			if p.curToken.typ != tokenIdent {
+				return nil, newParseError(p.curToken.line, p.curToken.column,
+					"expected alias after 'as', got %v", p.curToken.literal)
+			}
+			withAlias = p.curToken.literal
+			p.nextToken()
+		}
+	case p.isKeywordIdent("for"), p.curToken.typ == tokenFor:
+		p.nextToken()
+		expr, err := p.parsePrimary()
+		if err != nil {
+			return nil, err
+		}
+		forExpr = expr
+		if p.isKeywordIdent("as") {
+			p.nextToken()
+			if p.curToken.typ != tokenIdent {
+				return nil, newParseError(p.curToken.line, p.curToken.column,
+					"expected alias after 'as', got %v", p.curToken.literal)
+			}
+			forAlias = p.curToken.literal
+			p.nextToken()
+		}
+	}
+
+	// Optional named args: [, key: value]*  (also allowed without leading comma
+	// when there is no with/for clause)
+	for p.curToken.typ == tokenComma || p.curToken.typ == tokenIdent {
+		if p.curToken.typ == tokenComma {
+			p.nextToken()
+		}
+		if p.curToken.typ != tokenIdent {
+			break
+		}
+		key := p.curToken.literal
+		p.nextToken()
+		if p.curToken.typ != tokenColon {
+			return nil, newParseError(p.curToken.line, p.curToken.column,
+				"expected ':' after named arg %q", key)
+		}
+		p.nextToken()
+		val, err := p.parseOr()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, NamedArg{Name: key, Value: val})
+	}
+
+	if err := p.expectTagClose(); err != nil {
+		return nil, err
+	}
+
+	if isolated {
+		return &RenderTag{
+			Template:  name,
+			With:      withExpr,
+			WithAlias: withAlias,
+			For:       forExpr,
+			ForAlias:  forAlias,
+			Args:      args,
+			Line:      line,
+			Column:    column,
+		}, nil
+	}
+	return &IncludeTag{
+		Template:  name,
+		With:      withExpr,
+		WithAlias: withAlias,
+		For:       forExpr,
+		ForAlias:  forAlias,
+		Args:      args,
+		Line:      line,
+		Column:    column,
+	}, nil
+}
+
 // parseExpression parses an expression with filters.
 func (p *parser) parseExpression() (Expression, error) {
 	expr, err := p.parseOr()
@@ -1101,6 +1215,13 @@ func (p *parser) parseAtom() (Expression, error) {
 		return nil, newParseError(line, column,
 			"unexpected token in expression: %v", p.curToken.literal)
 	}
+}
+
+// isKeywordIdent reports whether the current token is an identifier with the
+// given literal text. Used for context-sensitive keywords like `with` and
+// `as` that are not reserved globally.
+func (p *parser) isKeywordIdent(word string) bool {
+	return p.curToken.typ == tokenIdent && p.curToken.literal == word
 }
 
 // isTagKeyword checks if the current position is at a tag with the given keyword.

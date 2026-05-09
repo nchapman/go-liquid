@@ -275,3 +275,43 @@ type DecrementTag struct {
 
 func (t *DecrementTag) node()                   {}
 func (t *DecrementTag) Pos() (line, column int) { return t.Line, t.Column }
+
+// NamedArg is a key: value pair passed to {% render %} or {% include %}.
+type NamedArg struct {
+	Name  string
+	Value Expression
+}
+
+// RenderTag represents {% render "partial" [with expr [as alias]]
+// [for expr as alias] [, name: value, ...] %}. The partial evaluates in an
+// isolated scope; only explicitly bound variables are visible inside.
+type RenderTag struct {
+	Template  string // partial name (string literal at parse time)
+	With      Expression
+	WithAlias string // optional `as alias`; defaults to Template
+	For       Expression
+	ForAlias  string // alias for each iteration; defaults to Template
+	Args      []NamedArg
+	Line      int
+	Column    int
+}
+
+func (t *RenderTag) node()                   {}
+func (t *RenderTag) Pos() (line, column int) { return t.Line, t.Column }
+
+// IncludeTag is the legacy partial inclusion form. Unlike RenderTag, it
+// shares the parent scope: assignments in the partial are visible to the
+// caller.
+type IncludeTag struct {
+	Template  string
+	With      Expression
+	WithAlias string
+	For       Expression
+	ForAlias  string
+	Args      []NamedArg
+	Line      int
+	Column    int
+}
+
+func (t *IncludeTag) node()                   {}
+func (t *IncludeTag) Pos() (line, column int) { return t.Line, t.Column }

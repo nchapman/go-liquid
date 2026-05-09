@@ -8,7 +8,20 @@ import (
 	"testing"
 )
 
-// TestTemplateSpecs runs all template spec tests (.tmpl or .liquid)
+// TestTemplateSpecs walks testdata/spec.
+//
+// Two flavors of scenario are supported:
+//
+//  1. Flat scenarios — a *.tmpl (or *.liquid) file at the top of the spec
+//     directory paired with a sibling *.tmpl.out (or *.liquid.out). The
+//     template may carry a `{# data: {...} #}` JSON directive supplying the
+//     render data.
+//
+//  2. Partial scenarios — a subdirectory containing index.tmpl plus any
+//     number of additional *.tmpl files used as partials. The partial name
+//     in {% render %} / {% include %} is the file basename without
+//     extension. expected.out holds the golden output. Data may live in the
+//     index.tmpl directive or in a sibling data.json file.
 func TestTemplateSpecs(t *testing.T) {
 	specDir := "testdata/spec"
 
@@ -18,27 +31,96 @@ func TestTemplateSpecs(t *testing.T) {
 	}
 
 	for _, entry := range entries {
+		name := entry.Name()
 		if entry.IsDir() {
+			// Partial scenario: must have index.tmpl + expected.out
+			path := filepath.Join(specDir, name)
+			if _, err := os.Stat(filepath.Join(path, "index.tmpl")); err != nil {
+				continue // not a partial scenario (e.g., the i18n fixture dir)
+			}
+			t.Run(name, func(t *testing.T) {
+				runPartialSpec(t, path)
+			})
 			continue
 		}
-		// Check for template extensions
+
 		var testName string
 		switch {
-		case strings.HasSuffix(entry.Name(), ".tmpl"):
-			testName = strings.TrimSuffix(entry.Name(), ".tmpl")
-		case strings.HasSuffix(entry.Name(), ".liquid"):
-			// Skip .liquid.out files
-			if strings.HasSuffix(entry.Name(), ".liquid.out") {
+		case strings.HasSuffix(name, ".tmpl"):
+			testName = strings.TrimSuffix(name, ".tmpl")
+		case strings.HasSuffix(name, ".liquid"):
+			if strings.HasSuffix(name, ".liquid.out") {
 				continue
 			}
-			testName = strings.TrimSuffix(entry.Name(), ".liquid")
+			testName = strings.TrimSuffix(name, ".liquid")
 		default:
 			continue
 		}
 
 		t.Run(testName, func(t *testing.T) {
-			runTemplateSpec(t, filepath.Join(specDir, entry.Name()))
+			runTemplateSpec(t, filepath.Join(specDir, name))
 		})
+	}
+}
+
+// runPartialSpec renders index.tmpl with all sibling *.tmpl files registered
+// as partials (loaded by basename without extension) and compares to
+// expected.out.
+func runPartialSpec(t *testing.T, dir string) {
+	t.Helper()
+	indexPath := filepath.Join(dir, "index.tmpl")
+	indexBytes, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", indexPath, err)
+	}
+	source := string(indexBytes)
+
+	data := extractData(t, source)
+	source = removeDataDirective(source)
+
+	// Optional data.json overrides any inline directive.
+	if b, err := os.ReadFile(filepath.Join(dir, "data.json")); err == nil {
+		var d map[string]any
+		if err := json.Unmarshal(b, &d); err != nil {
+			t.Fatalf("parse data.json: %v", err)
+		}
+		data = d
+	}
+
+	// Build a MapLoader from sibling *.tmpl files (excluding index.tmpl).
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir %s: %v", dir, err)
+	}
+	loader := MapLoader{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tmpl") || e.Name() == "index.tmpl" {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatalf("read partial %s: %v", e.Name(), err)
+		}
+		loader[strings.TrimSuffix(e.Name(), ".tmpl")] = string(body)
+	}
+
+	tmpl, err := Parse(source)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	tmpl.WithLoader(loader)
+
+	result, err := tmpl.Render(data)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	expected, err := os.ReadFile(filepath.Join(dir, "expected.out"))
+	if err != nil {
+		t.Fatalf("read expected.out: %v", err)
+	}
+	if result != string(expected) {
+		t.Errorf("output mismatch:\n--- expected ---\n%s\n--- actual ---\n%s", expected, result)
 	}
 }
 

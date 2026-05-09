@@ -1,15 +1,27 @@
 package liquid
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 )
+
+// maxPartialDepth caps recursion through {% render %} and {% include %} so
+// a self-referential or mutually-recursive partial returns an error rather
+// than overflowing the goroutine stack.
+const maxPartialDepth = 100
+
+// maxRangeSize bounds eager expansion of {% for i in (a..b) %} so that
+// attacker-controlled endpoints cannot trigger an unbounded allocation.
+const maxRangeSize = 1_000_000
 
 // evaluator executes a parsed template.
 type evaluator struct {
 	ctx           *context
 	cycleCounters map[string]int // tracks cycle position for each group
 	counterVars   map[string]int // tracks increment/decrement counters
+	partials      *partialCache  // nil if no loader configured
+	partialDepth  int            // current depth through render/include
 }
 
 func newEvaluator(data map[string]any) *evaluator {
@@ -98,9 +110,176 @@ func (e *evaluator) evalNode(node Node) (string, error) {
 	case *DecrementTag:
 		return e.evalDecrementTag(n)
 
+	case *RenderTag:
+		return e.evalRenderTag(n)
+
+	case *IncludeTag:
+		return e.evalIncludeTag(n)
+
 	default:
 		return "", nil
 	}
+}
+
+// evalRenderTag evaluates {% render %} in an isolated scope. Only explicitly
+// bound variables are visible to the partial; the partial cannot see or
+// modify caller variables.
+func (e *evaluator) evalRenderTag(tag *RenderTag) (string, error) {
+	partial, err := e.loadPartial(tag.Template)
+	if err != nil {
+		return "", err
+	}
+
+	// Build the data map the partial sees. `with` is bound first so that
+	// named args with the same key explicitly override it.
+	data := make(map[string]any)
+	if tag.With != nil {
+		val, err := e.evalExpr(tag.With)
+		if err != nil {
+			return "", err
+		}
+		// Skip nil bindings so the partial's `default:` filter applies, matching
+		// Shopify Liquid's behavior for unset `with` operands.
+		if val != nil {
+			data[partialAlias(tag.WithAlias, tag.Template)] = val
+		}
+	}
+	args, err := e.evalNamedArgs(tag.Args)
+	if err != nil {
+		return "", err
+	}
+	for k, v := range args {
+		data[k] = v
+	}
+
+	// `for collection [as alias]`: render once per item with forloop.
+	if tag.For != nil {
+		coll, err := e.evalExpr(tag.For)
+		if err != nil {
+			return "", err
+		}
+		items := toSlice(coll)
+		alias := partialAlias(tag.ForAlias, tag.Template)
+		var sb strings.Builder
+		length := len(items)
+		for i, item := range items {
+			itemData := make(map[string]any, len(data)+2)
+			for k, v := range data {
+				itemData[k] = v
+			}
+			itemData[alias] = item
+			itemData["forloop"] = newForloop(i, length).toMap()
+			out, err := e.renderPartialIsolated(partial, itemData)
+			if err != nil {
+				return "", err
+			}
+			sb.WriteString(out)
+		}
+		return sb.String(), nil
+	}
+
+	return e.renderPartialIsolated(partial, data)
+}
+
+// evalIncludeTag is the legacy form: shares the parent scope. Variables
+// assigned in the partial leak into the caller.
+func (e *evaluator) evalIncludeTag(tag *IncludeTag) (string, error) {
+	partial, err := e.loadPartial(tag.Template)
+	if err != nil {
+		return "", err
+	}
+	if e.partialDepth >= maxPartialDepth {
+		return "", fmt.Errorf("partial depth exceeded %d (possible cycle in %q)", maxPartialDepth, tag.Template)
+	}
+	e.partialDepth++
+	defer func() { e.partialDepth-- }()
+
+	if tag.With != nil {
+		val, err := e.evalExpr(tag.With)
+		if err != nil {
+			return "", err
+		}
+		if val != nil {
+			e.ctx.set(partialAlias(tag.WithAlias, tag.Template), val)
+		}
+	}
+	args, err := e.evalNamedArgs(tag.Args)
+	if err != nil {
+		return "", err
+	}
+	for k, v := range args {
+		e.ctx.set(k, v)
+	}
+
+	if tag.For != nil {
+		coll, err := e.evalExpr(tag.For)
+		if err != nil {
+			return "", err
+		}
+		items := toSlice(coll)
+		alias := partialAlias(tag.ForAlias, tag.Template)
+		length := len(items)
+		var sb strings.Builder
+		for i, item := range items {
+			e.ctx.set(alias, item)
+			e.ctx.set("forloop", newForloop(i, length).toMap())
+			out, err := e.evalNodes(partial.ast.nodes)
+			if err != nil {
+				return "", err
+			}
+			sb.WriteString(out)
+		}
+		return sb.String(), nil
+	}
+
+	return e.evalNodes(partial.ast.nodes)
+}
+
+func (e *evaluator) loadPartial(name string) (*Template, error) {
+	if e.partials == nil {
+		return nil, fmt.Errorf("no loader configured: cannot resolve partial %q", name)
+	}
+	return e.partials.get(name)
+}
+
+// partialAlias returns the explicit alias if non-empty, otherwise the
+// basename of the template path. Shopify Liquid binds `with`/`for` to the
+// basename so that {% render "shared/card" with x %} exposes `card`, not
+// `shared/card`.
+func partialAlias(explicit, template string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if i := strings.LastIndexByte(template, '/'); i >= 0 {
+		return template[i+1:]
+	}
+	return template
+}
+
+func (e *evaluator) evalNamedArgs(args []NamedArg) (map[string]any, error) {
+	out := make(map[string]any, len(args))
+	for _, a := range args {
+		v, err := e.evalExpr(a.Value)
+		if err != nil {
+			return nil, err
+		}
+		out[a.Name] = v
+	}
+	return out, nil
+}
+
+// renderPartialIsolated runs the partial with its own evaluator (no shared
+// scope, fresh cycle/counter state). The partial cache and depth counter
+// are inherited so nested partials still memoize and respect the recursion
+// cap.
+func (e *evaluator) renderPartialIsolated(partial *Template, data map[string]any) (string, error) {
+	if e.partialDepth >= maxPartialDepth {
+		return "", fmt.Errorf("partial depth exceeded %d (possible cycle)", maxPartialDepth)
+	}
+	sub := newEvaluator(data)
+	sub.partials = e.partials
+	sub.partialDepth = e.partialDepth + 1
+	return sub.evaluate(partial.ast)
 }
 
 func (e *evaluator) evalIfTag(tag *IfTag) (string, error) {
@@ -178,7 +357,9 @@ func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
 		return "", err
 	}
 
-	// Handle range expression
+	// Handle range expression. The slice is materialized eagerly so that
+	// limit/offset/reversed below can apply uniformly; cap the range size
+	// to keep attacker-controlled endpoints from exhausting memory.
 	if rangeExpr, ok := tag.Collection.(*RangeExpr); ok {
 		startVal, err := e.evalExpr(rangeExpr.Start)
 		if err != nil {
@@ -191,7 +372,15 @@ func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
 		start := int(toInt(toNumber(startVal)))
 		end := int(toInt(toNumber(endVal)))
 
-		var items []any
+		size := end - start
+		if size < 0 {
+			size = -size
+		}
+		if size+1 > maxRangeSize {
+			return "", fmt.Errorf("for range size %d exceeds limit %d", size+1, maxRangeSize)
+		}
+
+		items := make([]any, 0, size+1)
 		if start <= end {
 			for i := start; i <= end; i++ {
 				items = append(items, i)

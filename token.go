@@ -86,6 +86,8 @@ const (
 	tokenCycle
 	tokenIncrement
 	tokenDecrement
+	tokenRender
+	tokenInclude
 )
 
 // token represents a token in a Liquid template.
@@ -133,6 +135,8 @@ var keywords = map[string]TokenType{
 	"cycle":      tokenCycle,
 	"increment":  tokenIncrement,
 	"decrement":  tokenDecrement,
+	"render":     tokenRender,
+	"include":    tokenInclude,
 }
 
 func lookupIdent(ident string) TokenType {

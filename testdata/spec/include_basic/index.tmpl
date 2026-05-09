@@ -1,0 +1,4 @@
+{# data: {"name": "Alice"} #}
+before:{{ flag | default: "?" }}
+{%- include "side" -%}
+after:{{ flag }}

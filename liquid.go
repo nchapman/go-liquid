@@ -28,12 +28,24 @@ package liquid
 import (
 	"io"
 	"reflect"
+	"sync/atomic"
 )
 
 // Template is a parsed Liquid template. Templates are safe to render
-// concurrently from multiple goroutines.
+// concurrently from multiple goroutines, including across calls to
+// WithLoader (the loader pointer is updated atomically).
 type Template struct {
-	ast *templateAST
+	ast      *templateAST
+	partials atomic.Pointer[partialCache]
+}
+
+// WithLoader attaches a Loader so the template can resolve {% render %} and
+// {% include %} partials. Returns the template for chaining. Subsequent
+// calls swap the loader atomically and reset the partial cache; in-flight
+// renders observe the loader they started with.
+func (t *Template) WithLoader(l Loader) *Template {
+	t.partials.Store(newPartialCache(l))
+	return t
 }
 
 // Parse parses a Liquid template source string.
@@ -59,6 +71,7 @@ func MustParse(source string) *Template {
 // Render executes the template against data and returns the rendered string.
 func (t *Template) Render(data any) (string, error) {
 	eval := newEvaluator(toStringMap(data))
+	eval.partials = t.partials.Load()
 	return eval.evaluate(t.ast)
 }
 
