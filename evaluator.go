@@ -168,7 +168,11 @@ func (e *evaluator) evalRenderTag(tag *RenderTag) (string, error) {
 				itemData[k] = v
 			}
 			itemData[alias] = item
-			itemData["forloop"] = newForloop(i, length).toMap()
+			// render is isolated → parentloop is nil. Shopify's render.rb sets
+			// forloop.name to the partial's template name (not the iteration
+			// alias), so {% render "card" for items as item %} exposes
+			// forloop.name == "card".
+			itemData["forloop"] = newForloop(i, length, tag.Template, nil)
 			out, err := e.renderPartialIsolated(partial, itemData)
 			if err != nil {
 				return "", err
@@ -219,10 +223,13 @@ func (e *evaluator) evalIncludeTag(tag *IncludeTag) (string, error) {
 		items := toSlice(coll)
 		alias := partialAlias(tag.ForAlias, tag.Template)
 		length := len(items)
+		// include shares parent scope, so the enclosing forloop (if any)
+		// becomes parentloop.
+		parent, _ := e.ctx.get("forloop").(map[string]any)
 		var sb strings.Builder
 		for i, item := range items {
 			e.ctx.set(alias, item)
-			e.ctx.set("forloop", newForloop(i, length).toMap())
+			e.ctx.set("forloop", newForloop(i, length, alias, parent))
 			out, err := e.evalNodes(partial.ast.nodes)
 			if err != nil {
 				return "", err
@@ -240,6 +247,26 @@ func (e *evaluator) loadPartial(name string) (*Template, error) {
 		return nil, fmt.Errorf("no loader configured: cannot resolve partial %q", name)
 	}
 	return e.partials.get(name)
+}
+
+// forloopName approximates Shopify's `forloop.name` ("{var}-{collection}").
+// We synthesize the collection portion from the AST since there is no
+// source-text reference; identifiers and ranges produce stable names, and
+// other expressions fall back to the variable name alone.
+func forloopName(tag *ForTag) string {
+	switch c := tag.Collection.(type) {
+	case *IdentExpr:
+		return tag.Variable + "-" + c.Name
+	case *DotExpr:
+		// best effort: walk to the rightmost property
+		if obj, ok := c.Object.(*IdentExpr); ok {
+			return tag.Variable + "-" + obj.Name + "." + c.Property
+		}
+		return tag.Variable + "-" + c.Property
+	case *RangeExpr:
+		return tag.Variable + "-(range)"
+	}
+	return tag.Variable
 }
 
 // partialAlias returns the explicit alias if non-empty, otherwise the
@@ -393,7 +420,14 @@ func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
 		collection = items
 	}
 
-	items := toSlice(collection)
+	// Liquid treats a string as a single iteration item, not a sequence of
+	// characters (toSlice splits strings for filter use). Match Shopify.
+	var items []any
+	if s, ok := collection.(string); ok {
+		items = []any{s}
+	} else {
+		items = toSlice(collection)
+	}
 	if len(items) == 0 {
 		if tag.ElseBody != nil {
 			return e.evalNodes(tag.ElseBody)
@@ -443,7 +477,13 @@ func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
 		return "", nil
 	}
 
-	// Create new scope for loop
+	// Capture the enclosing forloop (if any) BEFORE pushing a new scope so
+	// the new forloop.parentloop reflects the outer iteration. Shopify's
+	// `forloop.name` is "{var}-{collection}"; we render the collection
+	// expression source where possible, falling back to the variable name.
+	parent, _ := e.ctx.get("forloop").(map[string]any)
+	loopName := forloopName(tag)
+
 	e.ctx = e.ctx.push()
 	defer func() { e.ctx = e.ctx.parent }()
 
@@ -452,7 +492,7 @@ func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
 
 	for i, item := range items {
 		e.ctx.set(tag.Variable, item)
-		e.ctx.set("forloop", newForloop(i, length).toMap())
+		e.ctx.set("forloop", newForloop(i, length, loopName, parent))
 
 		result, err := e.evalNodes(tag.Body)
 		if err == errBreak {
@@ -517,7 +557,11 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 			args = append(args, val)
 		}
 
-		return filter(input, args...), nil
+		out := filter(input, args...)
+		if fe, ok := out.(filterError); ok {
+			return nil, fe.err
+		}
+		return out, nil
 
 	case *BinaryExpr:
 		return e.evalBinaryExpr(x)
@@ -534,11 +578,33 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 }
 
 func (e *evaluator) evalBinaryExpr(expr *BinaryExpr) (any, error) {
+	// Logical operators short-circuit so the right operand is never
+	// evaluated when the left determines the result. This matches Shopify's
+	// chain semantics and avoids triggering side effects (cycle/increment
+	// counters, partial loads, etc.) on the dead branch.
+	if expr.Operator == "and" || expr.Operator == "or" {
+		left, err := e.evalExpr(expr.Left)
+		if err != nil {
+			return nil, err
+		}
+		leftBool := toBool(left)
+		if expr.Operator == "and" && !leftBool {
+			return false, nil
+		}
+		if expr.Operator == "or" && leftBool {
+			return true, nil
+		}
+		right, err := e.evalExpr(expr.Right)
+		if err != nil {
+			return nil, err
+		}
+		return toBool(right), nil
+	}
+
 	left, err := e.evalExpr(expr.Left)
 	if err != nil {
 		return nil, err
 	}
-
 	right, err := e.evalExpr(expr.Right)
 	if err != nil {
 		return nil, err
@@ -557,10 +623,6 @@ func (e *evaluator) evalBinaryExpr(expr *BinaryExpr) (any, error) {
 		return compare(left, right) <= 0, nil
 	case ">=":
 		return compare(left, right) >= 0, nil
-	case "and":
-		return toBool(left) && toBool(right), nil
-	case "or":
-		return toBool(left) || toBool(right), nil
 	case "contains":
 		return contains(left, right), nil
 	default:

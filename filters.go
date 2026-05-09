@@ -12,9 +12,21 @@ import (
 	"unicode/utf8"
 )
 
-// FilterFunc is the signature for filter functions.
-// Input is the value being filtered, args are any additional arguments.
+// FilterFunc is the signature for filter functions. Input is the value
+// being filtered, args are any additional arguments.
+//
+// To signal a render-time error from a filter, return the value produced
+// by filterErrorf — the evaluator unwraps it into an error from Render.
 type FilterFunc func(input any, args ...any) any
+
+// filterError is a sentinel value a filter can return to abort rendering
+// with the wrapped error. Plumbed through any rather than the FilterFunc
+// signature so the common-case (infallible) filters stay simple.
+type filterError struct{ err error }
+
+func filterErrorf(format string, args ...any) any {
+	return filterError{err: fmt.Errorf(format, args...)}
+}
 
 // filters is the global filter registry.
 var filters = map[string]FilterFunc{
@@ -111,8 +123,15 @@ func filterCapitalize(input any, args ...any) any {
 	return strings.ToUpper(string(r)) + strings.ToLower(s[size:])
 }
 
+
+// stripChars is the cutset for strip/lstrip/rstrip. Matches Ruby's
+// String#strip (ASCII whitespace plus null), which is what Shopify uses.
+// Unicode whitespace like U+00A0 is intentionally NOT stripped so that
+// templates relying on Shopify's behavior produce identical output.
+const stripChars = " \t\n\r\v\f\x00"
+
 func filterStrip(input any, args ...any) any {
-	return strings.TrimSpace(toString(input))
+	return strings.Trim(toString(input), stripChars)
 }
 
 func filterEscape(input any, args ...any) any {
@@ -120,11 +139,11 @@ func filterEscape(input any, args ...any) any {
 }
 
 func filterLstrip(input any, args ...any) any {
-	return strings.TrimLeft(toString(input), " \t\n\r")
+	return strings.TrimLeft(toString(input), stripChars)
 }
 
 func filterRstrip(input any, args ...any) any {
-	return strings.TrimRight(toString(input), " \t\n\r")
+	return strings.TrimRight(toString(input), stripChars)
 }
 
 func filterSplit(input any, args ...any) any {
@@ -210,9 +229,15 @@ func filterTruncate(input any, args ...any) any {
 	if len(s) <= length {
 		return s
 	}
-	// Truncate to length minus ellipsis length
-	truncLen := max(0, length-len(ellipsis))
-	return s[:truncLen] + ellipsis
+	// Keep `length - len(ellipsis)` characters then append the ellipsis.
+	// Matches Shopify exactly, including the corner case where `length` is
+	// smaller than the ellipsis: the kept portion clamps to 0 and the full
+	// ellipsis is still appended (so output may exceed `length`).
+	keep := length - len(ellipsis)
+	if keep < 0 {
+		keep = 0
+	}
+	return s[:keep] + ellipsis
 }
 
 func filterTruncateWords(input any, args ...any) any {
@@ -261,13 +286,14 @@ func filterSlice(input any, args ...any) any {
 		return s[offset:end]
 	}
 
-	// Handle array slicing
+	// Handle array slicing. Always return a (possibly empty) []any so that
+	// downstream filters like `default` and `size` see an array, matching
+	// Shopify's behavior.
 	slice := toSlice(input)
 	if slice == nil {
-		return nil
+		return []any{}
 	}
 
-	// Handle negative offset
 	if offset < 0 {
 		offset = len(slice) + offset
 	}
@@ -275,7 +301,7 @@ func filterSlice(input any, args ...any) any {
 		offset = 0
 	}
 	if offset >= len(slice) {
-		return nil
+		return []any{}
 	}
 	end := min(offset+length, len(slice))
 	return slice[offset:end]
@@ -457,18 +483,42 @@ func filterFind(input any, args ...any) any {
 	return nil
 }
 
+// filterUniq returns input with duplicate elements removed, preserving order.
+// Equality is the same Liquid equal() used elsewhere (numeric, string, or
+// reflect.DeepEqual fallback), so structurally-equal maps and slices dedupe
+// correctly. The optional `property` argument compares items by that
+// property's value rather than the items themselves.
 func filterUniq(input any, args ...any) any {
 	slice := toSlice(input)
 	if slice == nil {
 		return nil
 	}
 
-	seen := make(map[string]bool)
+	var prop string
+	if len(args) > 0 {
+		prop = toString(args[0])
+	}
+
+	keyOf := func(item any) any {
+		if prop != "" {
+			return getProperty(item, prop)
+		}
+		return item
+	}
+
+	seen := make([]any, 0, len(slice))
 	var result []any
 	for _, item := range slice {
-		key := toString(item)
-		if !seen[key] {
-			seen[key] = true
+		k := keyOf(item)
+		dup := false
+		for _, s := range seen {
+			if equal(k, s) {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			seen = append(seen, k)
 			result = append(result, item)
 		}
 	}
@@ -500,10 +550,25 @@ func filterConcat(input any, args ...any) any {
 	copy(result, slice)
 
 	for _, arg := range args {
-		argSlice := toSlice(arg)
-		result = append(result, argSlice...)
+		if !isArrayLike(arg) {
+			return filterErrorf("concat: argument is not an array")
+		}
+		result = append(result, toSlice(arg)...)
 	}
 	return result
+}
+
+// isArrayLike reports whether v is a slice or array. Unlike toSlice, it
+// rejects strings (which toSlice splits into characters).
+func isArrayLike(v any) bool {
+	if v == nil {
+		return false
+	}
+	if _, ok := v.([]any); ok {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
 }
 
 func filterFlatten(input any, args ...any) any {
@@ -595,14 +660,30 @@ func equalValues(a, b any) bool {
 
 // Utility filters
 
+// filterDefault falls back to args[0] when input is "missing" — Shopify's
+// criterion is `nil OR false OR responds-to-empty?-and-is-empty`, i.e. nil,
+// false, "", [], {}. (This is broader than Liquid truthiness, which is
+// just nil/false.) The optional second arg `allow_false: true` would skip
+// the false case; we do not support named filter args yet.
 func filterDefault(input any, args ...any) any {
-	if isFalsy(input) {
+	if isDefaultMissing(input) {
 		if len(args) > 0 {
 			return args[0]
 		}
 		return ""
 	}
 	return input
+}
+
+// isDefaultMissing is `isBlank` minus the whitespace-only-string rule:
+// Shopify's `default` falls back when input is nil/false/""/[]/{} but
+// keeps non-empty whitespace strings ("   "), since Ruby's String#empty?
+// (which Shopify's default consults) is purely length==0.
+func isDefaultMissing(v any) bool {
+	if s, ok := v.(string); ok {
+		return s == ""
+	}
+	return isBlank(v)
 }
 
 // Math filters
@@ -669,19 +750,17 @@ func filterDividedBy(input any, args ...any) any {
 	a := toNumber(input)
 	b := toNumber(args[0])
 
-	// Check for division by zero
 	bFloat := toFloat(b)
 	if bFloat == 0 {
-		return 0
+		return filterErrorf("divided_by: division by zero")
 	}
 
-	// If divisor has a fractional part, return float
-	// Otherwise do integer division
+	// Float result if the divisor has a fractional part; otherwise integer
+	// division (matches the previous spec fixtures and is the most common
+	// Liquid expectation, since JSON-unmarshalled integers arrive as float64).
 	if bFloat != float64(int64(bFloat)) {
 		return toFloat(a) / bFloat
 	}
-
-	// Integer division
 	return toInt(a) / toInt(b)
 }
 
@@ -694,7 +773,7 @@ func filterModulo(input any, args ...any) any {
 	b := toInt(toNumber(args[0]))
 
 	if b == 0 {
-		return 0
+		return filterErrorf("modulo: division by zero")
 	}
 	return a % b
 }
@@ -968,20 +1047,18 @@ func toBool(v any) bool {
 }
 
 // isFalsy returns true if the value is considered falsy in Liquid.
-// Falsy: nil, false, empty string
+//
+// Liquid is famously narrow: only nil and false are falsy. Everything else —
+// including 0, "", [], and {} — is truthy. (The `empty` and `blank`
+// expressions compare equal to their zero values via `==`, but as bare
+// conditions they're sentinel objects, hence truthy.) See Shopify's
+// condition.rb interpret_condition.
 func isFalsy(v any) bool {
 	if v == nil {
 		return true
 	}
-	switch val := v.(type) {
-	case bool:
-		return !val
-	case string:
-		return val == ""
-	case emptyValue:
-		return true
-	case blankValue:
-		return true
+	if b, ok := v.(bool); ok {
+		return !b
 	}
 	return false
 }

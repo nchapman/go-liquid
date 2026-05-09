@@ -130,7 +130,7 @@ func filterBase64Encode(input any, _ ...any) any {
 func filterBase64Decode(input any, _ ...any) any {
 	out, err := base64.StdEncoding.DecodeString(toString(input))
 	if err != nil {
-		return ""
+		return filterErrorf("base64_decode: invalid base64 input")
 	}
 	return string(out)
 }
@@ -142,7 +142,7 @@ func filterBase64URLSafeEncode(input any, _ ...any) any {
 func filterBase64URLSafeDecode(input any, _ ...any) any {
 	out, err := base64.URLEncoding.DecodeString(toString(input))
 	if err != nil {
-		return ""
+		return filterErrorf("base64_url_safe_decode: invalid base64 input")
 	}
 	return string(out)
 }

@@ -48,39 +48,21 @@ func (c *context) setGlobal(name string, value any) {
 	root.vars[name] = value
 }
 
-// forloopObject holds metadata about a for loop iteration.
-type forloopObject struct {
-	Index   int  // 1-indexed position
-	Index0  int  // 0-indexed position
-	RIndex  int  // reverse 1-indexed position (length - index0)
-	RIndex0 int  // reverse 0-indexed position (length - index0 - 1)
-	First   bool // true if first iteration
-	Last    bool // true if last iteration
-	Length  int  // total number of items
-}
-
-// newForloop creates a forloop object for the given iteration.
-func newForloop(index0, length int) *forloopObject {
-	return &forloopObject{
-		Index:   index0 + 1,
-		Index0:  index0,
-		RIndex:  length - index0,
-		RIndex0: length - index0 - 1,
-		First:   index0 == 0,
-		Last:    index0 == length-1,
-		Length:  length,
-	}
-}
-
-// toMap converts the forloop object to a map for template access.
-func (f *forloopObject) toMap() map[string]any {
+// newForloop returns the map exposed as `forloop` inside a {% for %} body.
+// `name` is the bound iteration variable (Shopify uses this as
+// `forloop.name`); `parent` is the enclosing forloop's map (nil at the top
+// level). Both fields are surfaced verbatim so nested loops can walk
+// {{ forloop.parentloop.parentloop.index }}.
+func newForloop(index0, length int, name string, parent map[string]any) map[string]any {
 	return map[string]any{
-		"index":   f.Index,
-		"index0":  f.Index0,
-		"rindex":  f.RIndex,
-		"rindex0": f.RIndex0,
-		"first":   f.First,
-		"last":    f.Last,
-		"length":  f.Length,
+		"index":      index0 + 1,
+		"index0":     index0,
+		"rindex":     length - index0,
+		"rindex0":    length - index0 - 1,
+		"first":      index0 == 0,
+		"last":       index0 == length-1,
+		"length":     length,
+		"name":       name,
+		"parentloop": parent,
 	}
 }

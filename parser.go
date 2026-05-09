@@ -994,45 +994,38 @@ func (p *parser) parseExpression() (Expression, error) {
 	return expr, nil
 }
 
-// parseOr parses "or" expressions.
+// parseOr is the entry point for `and`/`or` chains. Liquid does not give
+// `and` higher precedence than `or` (unlike most languages); the chain is
+// evaluated as a single right-associative sequence so that
+// `F and T or T` matches Shopify's "false" (short-circuit on F) rather
+// than the C-style `(F and T) or T` = "true". See condition.rb's evaluate
+// loop for the canonical semantics.
 func (p *parser) parseOr() (Expression, error) {
-	left, err := p.parseAnd()
-	if err != nil {
-		return nil, err
-	}
-
-	for p.curToken.typ == tokenOr {
-		line := p.curToken.line
-		column := p.curToken.column
-		p.nextToken()
-
-		right, err := p.parseAnd()
-		if err != nil {
-			return nil, err
-		}
-		left = &BinaryExpr{Left: left, Operator: "or", Right: right, Line: line, Column: column}
-	}
-
-	return left, nil
+	return p.parseLogical()
 }
 
-// parseAnd parses "and" expressions.
-func (p *parser) parseAnd() (Expression, error) {
+// parseLogical builds a right-associative tree of `and`/`or` operators.
+// Both bind looser than every other operator (comparison, contains, etc.).
+func (p *parser) parseLogical() (Expression, error) {
 	left, err := p.parseContains()
 	if err != nil {
 		return nil, err
 	}
 
-	for p.curToken.typ == tokenAnd {
+	if p.curToken.typ == tokenAnd || p.curToken.typ == tokenOr {
+		op := "and"
+		if p.curToken.typ == tokenOr {
+			op = "or"
+		}
 		line := p.curToken.line
 		column := p.curToken.column
 		p.nextToken()
 
-		right, err := p.parseContains()
+		right, err := p.parseLogical()
 		if err != nil {
 			return nil, err
 		}
-		left = &BinaryExpr{Left: left, Operator: "and", Right: right, Line: line, Column: column}
+		return &BinaryExpr{Left: left, Operator: op, Right: right, Line: line, Column: column}, nil
 	}
 
 	return left, nil

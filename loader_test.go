@@ -257,3 +257,367 @@ func TestExpressionKeywordsStillReserved(t *testing.T) {
 		t.Fatalf("got %q", out)
 	}
 }
+
+func TestLiquidTruthiness(t *testing.T) {
+	// Only nil and false are falsy. 0, "", [], {} are all truthy.
+	cases := []struct {
+		template string
+		data     map[string]any
+		want     string
+	}{
+		{`{% if x %}T{% else %}F{% endif %}`, map[string]any{"x": ""}, "T"},
+		{`{% if x %}T{% else %}F{% endif %}`, map[string]any{"x": 0}, "T"},
+		{`{% if x %}T{% else %}F{% endif %}`, map[string]any{"x": []any{}}, "T"},
+		{`{% if x %}T{% else %}F{% endif %}`, map[string]any{"x": false}, "F"},
+		{`{% if x %}T{% else %}F{% endif %}`, map[string]any{"x": nil}, "F"},
+		{`{% if x %}T{% else %}F{% endif %}`, map[string]any{}, "F"}, // undefined → nil → falsy
+		// `default` follows broader "blank-or-falsy" semantics
+		{`{{ x | default: "fallback" }}`, map[string]any{"x": ""}, "fallback"},
+		{`{{ x | default: "fallback" }}`, map[string]any{"x": 0}, "0"},
+		{`{{ x | default: "fallback" }}`, map[string]any{"x": []any{}}, "fallback"},
+	}
+	for _, tc := range cases {
+		got, err := Render(tc.template, tc.data)
+		if err != nil {
+			t.Errorf("%s: %v", tc.template, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s with %v: got %q, want %q", tc.template, tc.data, got, tc.want)
+		}
+	}
+}
+
+func TestForOverStringIsSingleItem(t *testing.T) {
+	out, err := Render(`{% for x in s %}[{{ x }}]{% endfor %}`,
+		map[string]any{"s": "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "[hello]" {
+		t.Fatalf("got %q, want [hello]", out)
+	}
+}
+
+func TestStringFiltersStillCharSplit(t *testing.T) {
+	// first/size/join on a string should still treat it as characters.
+	out, err := Render(`{{ "hello" | first }}-{{ "hello" | size }}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "h-5" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestUniqDeepEquality(t *testing.T) {
+	// Distinct objects with the same string form should NOT collapse.
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"id": 1, "name": "a"},
+			map[string]any{"id": 2, "name": "b"},
+			map[string]any{"id": 1, "name": "a"}, // exact dup of first
+			map[string]any{"id": 3, "name": "c"},
+		},
+	}
+	out, err := Render(`{{ items | uniq | size }}`, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "3" {
+		t.Fatalf("got %q, want 3", out)
+	}
+}
+
+func TestUniqByProperty(t *testing.T) {
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"id": 1, "name": "a"},
+			map[string]any{"id": 2, "name": "b"},
+			map[string]any{"id": 1, "name": "different"},
+		},
+	}
+	out, err := Render(`{{ items | uniq: "id" | size }}`, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "2" {
+		t.Fatalf("got %q, want 2", out)
+	}
+}
+
+func TestForloopName(t *testing.T) {
+	out, err := Render(`{% for item in products %}{{ forloop.name }}|{% endfor %}`,
+		map[string]any{"products": []any{1, 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "item-products|item-products|" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestForloopParentloop(t *testing.T) {
+	out, err := Render(
+		`{% for row in rows %}{% for cell in row %}{{ forloop.parentloop.index }}.{{ forloop.index }} {% endfor %}{% endfor %}`,
+		map[string]any{"rows": []any{
+			[]any{"a", "b"},
+			[]any{"c", "d", "e"},
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "1.1 1.2 2.1 2.2 2.3 " {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestForloopParentloopNilAtTopLevel(t *testing.T) {
+	out, err := Render(`{% for x in xs %}{{ forloop.parentloop | default: "none" }}{% endfor %}`,
+		map[string]any{"xs": []any{1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "none" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestWhereDefaultsToTruthy(t *testing.T) {
+	// When target_value is omitted, items whose property is any truthy value
+	// (not nil, not false) should match — including string "yes", number 1, etc.
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"flag": true, "name": "a"},
+			map[string]any{"flag": false, "name": "b"},
+			map[string]any{"flag": "yes", "name": "c"},
+			map[string]any{"flag": nil, "name": "d"},
+			map[string]any{"flag": 1, "name": "e"},
+		},
+	}
+	out, err := Render(`{{ items | where: "flag" | map: "name" | join: "," }}`, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "a,c,e" {
+		t.Fatalf("where default: got %q, want a,c,e", out)
+	}
+}
+
+func TestRejectDefaultsToTruthy(t *testing.T) {
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"flag": true, "name": "a"},
+			map[string]any{"flag": false, "name": "b"},
+			map[string]any{"flag": nil, "name": "c"},
+		},
+	}
+	out, err := Render(`{{ items | reject: "flag" | map: "name" | join: "," }}`, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "b,c" {
+		t.Fatalf("reject default: got %q, want b,c", out)
+	}
+}
+
+func TestFindIndexDefaultsToTruthy(t *testing.T) {
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"flag": false},
+			map[string]any{"flag": "x"}, // truthy
+			map[string]any{"flag": true},
+		},
+	}
+	out, err := Render(`{{ items | find_index: "flag" }}`, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "1" {
+		t.Fatalf("find_index default: got %q, want 1", out)
+	}
+}
+
+func TestHasDefaultsToTruthy(t *testing.T) {
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"flag": false},
+			map[string]any{"flag": "yes"},
+		},
+	}
+	out, err := Render(`{{ items | has: "flag" }}`, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "true" {
+		t.Fatalf("has default: got %q, want true", out)
+	}
+}
+
+func TestLogicalOperatorPrecedence(t *testing.T) {
+	// Liquid's and/or are evaluated right-to-left as a single chain (no
+	// precedence between them). This matches Shopify; classical C-style
+	// `and-binds-tighter-than-or` would give different answers for cases
+	// like "F and T or T".
+	cases := []struct {
+		template string
+		want     string
+	}{
+		// `F and T or T` — Shopify: F (short-circuit on F at the start of the chain)
+		{`{% if false and true or true %}T{% else %}F{% endif %}`, "F"},
+		// `T or F and F` — Shopify: T (short-circuit on T)
+		{`{% if true or false and false %}T{% else %}F{% endif %}`, "T"},
+		// `T and F or T` — Shopify: a=T not falsy → continue. b=F not truthy (or-rel)?
+		// Actually: T relation=and not falsy → continue. F relation=or truthy(F)=false → continue. T return T → truthy.
+		{`{% if true and false or true %}T{% else %}F{% endif %}`, "T"},
+		// `F or T and F` — Shopify: F (or-rel, not truthy → continue). T (and-rel, truthy → continue). F → return F → falsy.
+		{`{% if false or true and false %}T{% else %}F{% endif %}`, "F"},
+		// Longer chain: `F or T or F` → eventually return F (last), but T short-circuits or → T
+		{`{% if false or true or false %}T{% else %}F{% endif %}`, "T"},
+		// All-and: `T and T and F` → F (last)
+		{`{% if true and true and false %}T{% else %}F{% endif %}`, "F"},
+	}
+	for _, tc := range cases {
+		got, err := Render(tc.template, nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.template, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.template, got, tc.want)
+		}
+	}
+}
+
+func TestDivisionByZeroErrors(t *testing.T) {
+	cases := []string{
+		`{{ 10 | divided_by: 0 }}`,
+		`{{ 10 | modulo: 0 }}`,
+	}
+	for _, tmpl := range cases {
+		_, err := Render(tmpl, nil)
+		if err == nil {
+			t.Errorf("%s: expected error, got nil", tmpl)
+			continue
+		}
+		if !strings.Contains(err.Error(), "zero") {
+			t.Errorf("%s: error %q does not mention zero", tmpl, err)
+		}
+	}
+}
+
+func TestBase64DecodeInvalidErrors(t *testing.T) {
+	_, err := Render(`{{ "not!valid!base64" | base64_decode }}`, nil)
+	if err == nil {
+		t.Fatal("expected error for invalid base64 input")
+	}
+	if !strings.Contains(err.Error(), "base64") {
+		t.Fatalf("error does not mention base64: %v", err)
+	}
+}
+
+
+func TestSliceReturnsEmptyArrayNotNil(t *testing.T) {
+	// slice on an empty/over-shot range should return [], not nil, so that
+	// chaining with size or default works as expected.
+	out, err := Render(`{{ items | slice: 10, 5 | size }}-{{ items | slice: 10, 5 | default: "fallback" }}`,
+		map[string]any{"items": []any{1, 2, 3}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "0-fallback" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestConcatNonArrayErrors(t *testing.T) {
+	_, err := Render(`{{ items | concat: "not an array" }}`,
+		map[string]any{"items": []any{1, 2}})
+	if err == nil {
+		t.Fatal("expected error for concat with non-array")
+	}
+	if !strings.Contains(err.Error(), "concat") {
+		t.Fatalf("error does not mention concat: %v", err)
+	}
+}
+
+func TestTruncateShortLength(t *testing.T) {
+	// Matches Shopify: keep = max(0, length - len(ellipsis)) then append the
+	// full ellipsis. Output can exceed `length` when length is smaller than
+	// the ellipsis itself — that's the canonical behavior.
+	cases := []struct {
+		in, want string
+	}{
+		{`{{ "hello world" | truncate: 5 }}`, "he..."},
+		{`{{ "hello world" | truncate: 3 }}`, "..."},
+		{`{{ "hello world" | truncate: 2 }}`, "..."},
+		{`{{ "hello world" | truncate: 0 }}`, "..."},
+	}
+	for _, tc := range cases {
+		got, err := Render(tc.in, nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestStripIsAsciiOnly(t *testing.T) {
+	// Ruby's String#strip and Shopify's `strip` filter remove only ASCII
+	// whitespace plus null. Unicode whitespace such as U+00A0 (NBSP) is
+	// preserved so go-liquid matches Shopify byte-for-byte. We build the
+	// input through data binding so the NBSP travels intact.
+	const nbsp = " "
+	in := " \thi\t " + nbsp + "x" + nbsp
+	out, err := Render(`{{ s | strip }}`, map[string]any{"s": in})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "hi\t " + nbsp + "x" + nbsp
+	if out != want {
+		t.Fatalf("got %q, want %q", out, want)
+	}
+}
+
+func TestRenderForLoopNameIsTemplateName(t *testing.T) {
+	out, err := MustParse(`{% render "card" for items as item %}`).WithLoader(MapLoader{
+		"card": `{{ forloop.name }}|`,
+	}).Render(map[string]any{"items": []any{1, 2, 3}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "card|card|card|" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestAndOrShortCircuit(t *testing.T) {
+	// `and` should not evaluate the right side when the left is falsy;
+	// `or` should not evaluate the right side when the left is truthy.
+	// {% cycle %} mutates state visibly between renders, so we use it to
+	// detect whether the right side was evaluated.
+	cases := []struct {
+		template string
+		want     string
+	}{
+		// false and (cycle) — cycle must NOT advance
+		{`{% if false and 1 %}{% endif %}{% cycle "a","b" %}-{% cycle "a","b" %}`, "a-b"},
+		// true or (cycle) — cycle must NOT advance
+		{`{% if true or 1 %}{% endif %}{% cycle "x","y" %}-{% cycle "x","y" %}`, "x-y"},
+		// true and (cycle) — cycle WILL advance, baseline check
+		{`{% if true and 1 %}{% endif %}{% cycle "p","q" %}-{% cycle "p","q" %}`, "p-q"},
+	}
+	for _, tc := range cases {
+		got, err := Render(tc.template, nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.template, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.template, got, tc.want)
+		}
+	}
+}
