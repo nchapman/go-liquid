@@ -647,10 +647,15 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 }
 
 func (e *evaluator) evalBinaryExpr(expr *BinaryExpr) (any, error) {
-	// Logical operators short-circuit so the right operand is never
-	// evaluated when the left determines the result. This matches Shopify's
-	// chain semantics and avoids triggering side effects (cycle/increment
-	// counters, partial loads, etc.) on the dead branch.
+	// Logical operators short-circuit AND preserve operand values:
+	//
+	//   `a or b`  → a if truthy, else b (verbatim)
+	//   `a and b` → a if falsy,  else b (verbatim)
+	//
+	// Matches Shopify (and Ruby/JS). Conditional contexts wrap the result
+	// in toBool, so {% if a or b %} still does the right thing; the value-
+	// preservation matters when a chain is captured ({% assign x = a or b
+	// %}) or compared.
 	if expr.Operator == "and" || expr.Operator == "or" {
 		left, err := e.evalExpr(expr.Left)
 		if err != nil {
@@ -658,16 +663,12 @@ func (e *evaluator) evalBinaryExpr(expr *BinaryExpr) (any, error) {
 		}
 		leftBool := toBool(left)
 		if expr.Operator == "and" && !leftBool {
-			return false, nil
+			return left, nil
 		}
 		if expr.Operator == "or" && leftBool {
-			return true, nil
+			return left, nil
 		}
-		right, err := e.evalExpr(expr.Right)
-		if err != nil {
-			return nil, err
-		}
-		return toBool(right), nil
+		return e.evalExpr(expr.Right)
 	}
 
 	left, err := e.evalExpr(expr.Left)

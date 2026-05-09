@@ -1321,3 +1321,60 @@ func TestTemplateNameQuotedInError(t *testing.T) {
 		t.Fatalf("error contains raw newline: %q", err.Error())
 	}
 }
+
+func TestLogicalOperatorsPreserveValues(t *testing.T) {
+	// Shopify's and/or are short-circuit value operators: they return the
+	// actual chosen operand, not a coerced boolean.
+	cases := []struct {
+		template string
+		data     map[string]any
+		want     string
+	}{
+		// `or` returns the first truthy operand.
+		{`{% assign x = a or b %}{{ x }}`, map[string]any{"a": "first", "b": "second"}, "first"},
+		// When the left is falsy, returns the right verbatim — even when right is "".
+		// Use `inspect-style` rendering by appending a marker to make the empty visible.
+		{`{% assign x = a or b %}[{{ x }}]`, map[string]any{"a": nil, "b": ""}, "[]"},
+		// `and` returns the right when left is truthy.
+		{`{% assign x = a and b %}{{ x }}`, map[string]any{"a": "x", "b": "y"}, "y"},
+		// `and` returns the left when left is falsy (e.g. false → "false").
+		{`{% assign x = a and b %}{{ x }}`, map[string]any{"a": false, "b": "y"}, "false"},
+		// Conditional contexts still see the right boolean answer.
+		{`{% if a or b %}T{% else %}F{% endif %}`, map[string]any{"a": "", "b": false}, "T"}, // "" is truthy
+		{`{% if a and b %}T{% else %}F{% endif %}`, map[string]any{"a": false, "b": "y"}, "F"},
+	}
+	for _, tc := range cases {
+		got, err := Render(tc.template, tc.data)
+		if err != nil {
+			t.Errorf("%s: %v", tc.template, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s with %v: got %q, want %q", tc.template, tc.data, got, tc.want)
+		}
+	}
+}
+
+func TestEmptyAndBlankAreTruthyAsBareConditions(t *testing.T) {
+	// `empty` and `blank` are sentinel objects; as bare conditions they're
+	// non-nil non-false and therefore truthy. They retain their special
+	// meaning when used as the right side of == / != against actual values.
+	cases := []struct {
+		template, want string
+	}{
+		{`{% if empty %}T{% else %}F{% endif %}`, "T"},
+		{`{% if blank %}T{% else %}F{% endif %}`, "T"},
+		{`{% if "" == empty %}T{% else %}F{% endif %}`, "T"},
+		{`{% if "x" == empty %}T{% else %}F{% endif %}`, "F"},
+	}
+	for _, tc := range cases {
+		got, err := Render(tc.template, nil)
+		if err != nil {
+			t.Errorf("%s: %v", tc.template, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.template, got, tc.want)
+		}
+	}
+}

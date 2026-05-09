@@ -1,0 +1,11 @@
+{# data: {"items": [10, 20, 30]} #}
+{%- liquid
+  assign total = 0
+  for x in items
+    assign total = total | plus: x
+    echo "+"
+    echo x
+  endfor
+  echo " = "
+  echo total
+-%}
