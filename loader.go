@@ -110,8 +110,17 @@ func (c *partialCache) get(name string) (*Template, error) {
 	}
 	t, err := Parse(src)
 	if err != nil {
+		// Surface the partial name on the underlying ParseError so
+		// errors.As can extract it; falls back to a wrap for non-ParseError
+		// failures (which Parse doesn't currently produce, but keep the
+		// belt-and-suspenders).
+		if pe, ok := err.(*ParseError); ok {
+			pe.TemplateName = name
+			return nil, pe
+		}
 		return nil, fmt.Errorf("partial %q: %w", name, err)
 	}
+	t.name = name
 	t.partials.Store(c) // share cache with nested partials
 
 	c.mu.Lock()

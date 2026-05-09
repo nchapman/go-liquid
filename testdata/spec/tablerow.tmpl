@@ -1,0 +1,4 @@
+{# data: {"items": [1,2,3,4,5,6,7]} #}
+<table>
+{% tablerow x in items cols: 3 %}{{ x }}{% endtablerow -%}
+</table>

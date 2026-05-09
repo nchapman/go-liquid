@@ -210,9 +210,181 @@ func (p *parser) parseTag() (Node, error) {
 		return p.parseEchoTag()
 	case "liquid":
 		return p.parseLiquidTag()
+	case "tablerow":
+		return p.parseTablerowTag()
+	case "ifchanged":
+		return p.parseIfchangedTag()
+	case "doc":
+		return p.parseDocTag()
 	}
 	return nil, newParseError(p.curToken.line, p.curToken.column,
 		"unknown tag: %q", p.curToken.literal)
+}
+
+// parseTablerowTag handles
+//
+//	{% tablerow VAR in COLLECTION [cols: N] [limit: M] [offset: K] %}
+//	  body
+//	{% endtablerow %}
+//
+// The body is rendered once per item, wrapped in <td>/<tr> markup. cols
+// (default = collection length) controls how many cells appear per row.
+func (p *parser) parseTablerowTag() (Node, error) {
+	line := p.curToken.line
+	column := p.curToken.column
+	p.nextToken() // consume "tablerow"
+
+	if p.curToken.typ != tokenIdent {
+		return nil, newParseError(p.curToken.line, p.curToken.column,
+			"expected variable name in tablerow, got %q", p.curToken.literal)
+	}
+	varName := p.curToken.literal
+	p.nextToken()
+
+	if !p.isWord("in") {
+		return nil, newParseError(p.curToken.line, p.curToken.column,
+			"expected 'in' after tablerow variable, got %q", p.curToken.literal)
+	}
+	p.nextToken()
+
+	collection, err := p.parsePrimary()
+	if err != nil {
+		return nil, err
+	}
+
+	tag := &TablerowTag{
+		Variable:   varName,
+		Collection: collection,
+		Line:       line,
+		Column:     column,
+	}
+
+	// Attribute loop: same shape as for-tag's limit/offset/reversed but
+	// also accepts cols. Tablerow has no `reversed`.
+TablerowAttrs:
+	for {
+		switch {
+		case p.isWord("cols"):
+			p.nextToken()
+			if p.curToken.typ != tokenColon {
+				return nil, newParseError(p.curToken.line, p.curToken.column, "expected ':' after cols")
+			}
+			p.nextToken()
+			expr, err := p.parsePrimary()
+			if err != nil {
+				return nil, err
+			}
+			tag.Cols = expr
+		case p.isWord("limit"):
+			p.nextToken()
+			if p.curToken.typ != tokenColon {
+				return nil, newParseError(p.curToken.line, p.curToken.column, "expected ':' after limit")
+			}
+			p.nextToken()
+			expr, err := p.parsePrimary()
+			if err != nil {
+				return nil, err
+			}
+			tag.Limit = expr
+		case p.isWord("offset"):
+			p.nextToken()
+			if p.curToken.typ != tokenColon {
+				return nil, newParseError(p.curToken.line, p.curToken.column, "expected ':' after offset")
+			}
+			p.nextToken()
+			expr, err := p.parsePrimary()
+			if err != nil {
+				return nil, err
+			}
+			tag.Offset = expr
+		case p.isWord("range"):
+			// Shopify accepts `range:` as a tablerow attribute but never
+			// uses it (its renderer ignores it). Accept-and-discard for
+			// parity so templates that supply it parse without error.
+			p.nextToken()
+			if p.curToken.typ != tokenColon {
+				return nil, newParseError(p.curToken.line, p.curToken.column, "expected ':' after range")
+			}
+			p.nextToken()
+			if _, err := p.parsePrimary(); err != nil {
+				return nil, err
+			}
+		case p.curToken.typ == tokenComma:
+			p.nextToken()
+		default:
+			break TablerowAttrs
+		}
+	}
+
+	if err := p.expectTagClose(); err != nil {
+		return nil, err
+	}
+
+	tag.Body, err = p.parseNodes(func() bool {
+		return p.isTagKeyword("endtablerow")
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !p.isTagKeyword("endtablerow") {
+		return nil, newParseError(p.curToken.line, p.curToken.column, "expected endtablerow")
+	}
+	p.nextToken() // {%
+	p.nextToken() // endtablerow
+	if err := p.expectTagClose(); err != nil {
+		return nil, err
+	}
+	return tag, nil
+}
+
+// parseIfchangedTag handles {% ifchanged %}body{% endifchanged %}. The
+// body is rendered every iteration; the evaluator suppresses output that
+// matches the previous emission for the same block.
+func (p *parser) parseIfchangedTag() (Node, error) {
+	line := p.curToken.line
+	column := p.curToken.column
+	p.nextToken() // consume "ifchanged"
+	if err := p.expectTagClose(); err != nil {
+		return nil, err
+	}
+	body, err := p.parseNodes(func() bool {
+		return p.isTagKeyword("endifchanged")
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !p.isTagKeyword("endifchanged") {
+		return nil, newParseError(p.curToken.line, p.curToken.column, "expected endifchanged")
+	}
+	p.nextToken() // {%
+	p.nextToken() // endifchanged
+	if err := p.expectTagClose(); err != nil {
+		return nil, err
+	}
+	return &IfchangedTag{Body: body, Line: line, Column: column}, nil
+}
+
+// parseDocTag handles {% doc %}content{% enddoc %}. Body is captured as
+// raw text (Liquid syntax inside is not interpreted) and discarded at
+// render time.
+func (p *parser) parseDocTag() (Node, error) {
+	line := p.curToken.line
+	column := p.curToken.column
+	p.nextToken() // consume "doc"
+	if err := p.validateTagClose(); err != nil {
+		return nil, err
+	}
+	p.l.mode = modeText
+	content, _, _, _, ok := p.l.scanRawBodyTo("enddoc")
+	if !ok {
+		return nil, &ParseError{
+			Message: "unterminated {% doc %} block: expected enddoc",
+			Line:    line,
+			Column:  column,
+		}
+	}
+	p.nextToken() // refresh after lexer mode switch
+	return &DocTag{Content: content, Line: line, Column: column}, nil
 }
 
 // parseEchoTag handles {% echo expr | filter1 | filter2 %}. The body is an
@@ -1369,60 +1541,61 @@ func (p *parser) isWord(word string) bool {
 	return p.curToken.typ == tokenIdent && p.curToken.literal == word
 }
 
-// peekTokenIs reports whether the token immediately following curToken has
-// the given type. The lexer state is saved and restored exactly so callers
-// see no side effects.
-func (p *parser) peekTokenIs(typ TokenType) bool {
-	savedToken := p.curToken
-	savedPos := p.l.pos
-	savedReadPos := p.l.readPos
-	savedCh := p.l.ch
-	savedLine := p.l.line
-	savedCol := p.l.column
-	savedMode := p.l.mode
-
-	p.nextToken()
-	result := p.curToken.typ == typ
-
-	p.curToken = savedToken
-	p.l.pos = savedPos
-	p.l.readPos = savedReadPos
-	p.l.ch = savedCh
-	p.l.line = savedLine
-	p.l.column = savedCol
-	p.l.mode = savedMode
-	return result
+// parserSnapshot captures the parser+lexer state needed to peek ahead
+// without consuming input. Used by peekTokenIs and isTagKeyword for the
+// one-token lookahead they each need.
+type parserSnapshot struct {
+	tok                                token
+	pos, readPos                       int
+	ch                                 byte
+	line, column                       int
+	mode                               lexerMode
 }
 
-// isTagKeyword peeks past `{%` (or `{%-`) to see whether the next token is
-// the identifier `word`. Used to detect end-of-block markers like `endif`,
-// `endfor`, `else`, `when` from within a parseNodes loop without consuming
-// the tag delimiter. The lexer state is saved and restored exactly.
+func (p *parser) snapshot() parserSnapshot {
+	return parserSnapshot{
+		tok:     p.curToken,
+		pos:     p.l.pos,
+		readPos: p.l.readPos,
+		ch:      p.l.ch,
+		line:    p.l.line,
+		column:  p.l.column,
+		mode:    p.l.mode,
+	}
+}
+
+func (p *parser) restore(s parserSnapshot) {
+	p.curToken = s.tok
+	p.l.pos = s.pos
+	p.l.readPos = s.readPos
+	p.l.ch = s.ch
+	p.l.line = s.line
+	p.l.column = s.column
+	p.l.mode = s.mode
+}
+
+// peekTokenIs reports whether the token immediately following curToken
+// has the given type. State is saved and restored so callers see no side
+// effects.
+func (p *parser) peekTokenIs(typ TokenType) bool {
+	s := p.snapshot()
+	defer p.restore(s)
+	p.nextToken()
+	return p.curToken.typ == typ
+}
+
+// isTagKeyword peeks past `{%` (or `{%-`) to see whether the next token
+// is the identifier `word`. Used to detect end-of-block markers like
+// `endif`, `endfor`, `else`, `when` from within a parseNodes loop
+// without consuming the tag delimiter.
 func (p *parser) isTagKeyword(word string) bool {
 	if p.curToken.typ != tokenTagOpen && p.curToken.typ != tokenTagTrim {
 		return false
 	}
-
-	savedToken := p.curToken
-	savedPos := p.l.pos
-	savedReadPos := p.l.readPos
-	savedCh := p.l.ch
-	savedLine := p.l.line
-	savedCol := p.l.column
-	savedMode := p.l.mode
-
+	s := p.snapshot()
+	defer p.restore(s)
 	p.nextToken()
-	result := p.curToken.typ == tokenIdent && p.curToken.literal == word
-
-	p.curToken = savedToken
-	p.l.pos = savedPos
-	p.l.readPos = savedReadPos
-	p.l.ch = savedCh
-	p.l.line = savedLine
-	p.l.column = savedCol
-	p.l.mode = savedMode
-
-	return result
+	return p.curToken.typ == tokenIdent && p.curToken.literal == word
 }
 
 // expectTagClose expects and consumes a tag close token (%} or -%}).

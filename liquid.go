@@ -37,6 +37,7 @@ import (
 type Template struct {
 	ast      *templateAST
 	partials atomic.Pointer[partialCache]
+	name     string // optional; populated when loaded via a Loader
 }
 
 // WithLoader attaches a Loader so the template can resolve {% render %} and
@@ -45,6 +46,15 @@ type Template struct {
 // renders observe the loader they started with.
 func (t *Template) WithLoader(l Loader) *Template {
 	t.partials.Store(newPartialCache(l))
+	return t
+}
+
+// WithName attaches a name (typically a file path) to the template so
+// parse and render errors carry it on their TemplateName field. Useful
+// when reporting errors from templates loaded by name. Returns the
+// template for chaining.
+func (t *Template) WithName(name string) *Template {
+	t.name = name
 	return t
 }
 
@@ -100,6 +110,7 @@ func (t *Template) Render(data any, opts ...RenderOption) (string, error) {
 	eval.partials = t.partials.Load()
 	eval.strictVariables = o.strictVariables
 	eval.strictFilters = o.strictFilters
+	eval.templateName = t.name
 	return eval.evaluate(t.ast)
 }
 
@@ -132,11 +143,20 @@ func MustRender(source string, data any, opts ...RenderOption) string {
 	return out
 }
 
-// RegisterFilter installs a custom filter under the given name. It overrides
-// any built-in filter with the same name. Not safe to call concurrently with
-// rendering.
+// RegisterFilter installs a custom filter under the given name. It
+// overrides any built-in filter with the same name. Not safe to call
+// concurrently with rendering.
 func RegisterFilter(name string, fn FilterFunc) {
 	filters[name] = fn
+}
+
+// RegisterKwargFilter installs a custom filter that accepts named
+// arguments via kwargs. Use this when your filter takes options like
+// `{{ x | my_filter: group_by: "name", limit: 10 }}`. Not safe to call
+// concurrently with rendering. Overrides any built-in filter with the
+// same name.
+func RegisterKwargFilter(name string, fn KwargFilterFunc) {
+	kwargFilters[name] = fn
 }
 
 // toStringMap normalizes user-provided data into the map[string]any shape the

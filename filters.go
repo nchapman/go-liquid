@@ -660,13 +660,18 @@ func equalValues(a, b any) bool {
 
 // Utility filters
 
-// kwargFilterFunc is the internal signature for filters that accept named
-// arguments. The map is the evaluated key:value pairs from the template
-// (e.g. `default: 0, allow_false: true`). Filters in this table do not
-// also appear in the FilterFunc map.
-type kwargFilterFunc func(input any, args []any, kwargs map[string]any) any
+// KwargFilterFunc is the signature for filters that accept named
+// arguments. args holds positional arguments; kwargs is the evaluated
+// key:value pairs from the template (e.g. `default: 0, allow_false: true`).
+//
+// Use RegisterKwargFilter to register a custom kwarg-aware filter.
+// Plain (positional-only) filters use FilterFunc and RegisterFilter.
+//
+// To signal a render-time error, return filterErrorf — the evaluator
+// unwraps it the same way it does for FilterFunc.
+type KwargFilterFunc func(input any, args []any, kwargs map[string]any) any
 
-var kwargFilters = map[string]kwargFilterFunc{
+var kwargFilters = map[string]KwargFilterFunc{
 	"default": filterDefaultKw,
 }
 

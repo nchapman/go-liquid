@@ -2,6 +2,7 @@ package liquid
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
@@ -936,5 +937,387 @@ func TestParseErrorEscapesNewlinesInTokenLiteral(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "\nlevel=INFO") {
 		t.Fatalf("error contains raw newline (log injection): %q", err.Error())
+	}
+}
+
+// hardenable types for method-dispatch tests
+type personMethods struct{ first, last string }
+
+func (p personMethods) FullName() string  { return p.first + " " + p.last }
+func (p personMethods) Initials() (string, error) {
+	return string(p.first[0]) + string(p.last[0]), nil
+}
+func (p *personMethods) Close() error    { panic("Close should not be invoked from a template") }
+func (p personMethods) Save() error      { panic("Save should not be invoked from a template") }
+func (p personMethods) Reset()           { panic("Reset should not be invoked from a template") }
+func (p personMethods) Stats() (int, int) { return 1, 2 } // multi-value, not (T, error)
+
+func TestMethodDispatchAllowsDataAccessors(t *testing.T) {
+	p := personMethods{first: "Ada", last: "Lovelace"}
+	out, err := Render(`{{ p.FullName }}|{{ p.Initials }}`, map[string]any{"p": p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "Ada Lovelace|AL" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestMethodDispatchSkipsSideEffecting(t *testing.T) {
+	p := &personMethods{first: "Ada", last: "Lovelace"}
+	// Close, Save, Reset, Stats must NOT be invoked. Templates resolve them
+	// to nil (or empty string when output) without panicking.
+	cases := []string{
+		`{{ p.Close }}`, `{{ p.Save }}`, `{{ p.Reset }}`, `{{ p.Stats }}`,
+	}
+	for _, src := range cases {
+		out, err := Render(src, map[string]any{"p": p})
+		if err != nil {
+			t.Errorf("%s: unexpected error: %v", src, err)
+		}
+		if out != "" {
+			t.Errorf("%s: expected empty output, got %q", src, out)
+		}
+	}
+}
+
+// dropImpl shows the opt-in route for full property control.
+type dropImpl struct{ data map[string]any }
+
+func (d dropImpl) LiquidLookup(k string) (any, bool) {
+	v, ok := d.data[k]
+	return v, ok
+}
+
+func TestDropInterfaceTakesPrecedenceOverFields(t *testing.T) {
+	type withFields struct {
+		X string
+	}
+	// Embed via composition: a Drop wraps any backing data and templates only
+	// see what LiquidLookup returns, not raw struct methods/fields.
+	d := dropImpl{data: map[string]any{"shown": "hello"}}
+	out, err := Render(`{{ d.shown }}|{{ d.X | default: "absent" }}`,
+		map[string]any{"d": d})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "hello|absent" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestDropStrictVariablesUsesLookupOK(t *testing.T) {
+	d := dropImpl{data: map[string]any{"a": 1}}
+	_, err := Render(`{{ d.b }}`, map[string]any{"d": d}, StrictVariables())
+	if err == nil {
+		t.Fatal("expected error in strict mode for absent Drop key")
+	}
+	if !strings.Contains(err.Error(), "undefined property") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestRegisterKwargFilter(t *testing.T) {
+	RegisterKwargFilter("greet", func(input any, args []any, kwargs map[string]any) any {
+		greeting, _ := kwargs["greeting"].(string)
+		if greeting == "" {
+			greeting = "Hello"
+		}
+		return greeting + ", " + toStringForTest(input) + "!"
+	})
+	defer delete(kwargFilters, "greet")
+
+	out, err := Render(`{{ "Ada" | greet }} {{ "Bob" | greet: greeting: "Hi" }}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "Hello, Ada! Hi, Bob!" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+// toStringForTest mirrors the package's internal toString — exposed via
+// fmt to avoid coupling the test to private helpers.
+func toStringForTest(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func TestTablerowBasic(t *testing.T) {
+	out, err := Render(
+		`{% tablerow x in items cols: 2 %}{{ x }}{% endtablerow %}`,
+		map[string]any{"items": []any{"a", "b", "c", "d", "e"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "<tr class=\"row1\">\n<td class=\"col1\">a</td><td class=\"col2\">b</td></tr>\n<tr class=\"row2\"><td class=\"col1\">c</td><td class=\"col2\">d</td></tr>\n<tr class=\"row3\"><td class=\"col1\">e</td></tr>\n"
+	if out != want {
+		t.Fatalf("\nwant: %q\ngot:  %q", want, out)
+	}
+}
+
+func TestTablerowLoopFields(t *testing.T) {
+	out, err := Render(
+		`{% tablerow x in items cols: 2 %}{{ tablerowloop.row }}.{{ tablerowloop.col }}/{{ tablerowloop.index }}{% endtablerow %}`,
+		map[string]any{"items": []any{"a", "b", "c"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// row1 col1=a → 1.1/1; col2=b → 1.2/2; new row; row2 col1=c → 2.1/3
+	if !strings.Contains(out, "1.1/1") || !strings.Contains(out, "1.2/2") || !strings.Contains(out, "2.1/3") {
+		t.Fatalf("missing tablerowloop values in: %q", out)
+	}
+}
+
+func TestTablerowLimitOffset(t *testing.T) {
+	out, err := Render(
+		`{% tablerow x in items cols: 2 limit: 3 offset: 1 %}{{ x }}{% endtablerow %}`,
+		map[string]any{"items": []any{"a", "b", "c", "d", "e"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// offset 1 -> [b,c,d,e]; limit 3 -> [b,c,d]; cols 2 -> rows: [b,c] [d]
+	if !strings.Contains(out, ">b<") || !strings.Contains(out, ">c<") || !strings.Contains(out, ">d<") {
+		t.Fatalf("expected b/c/d, got %q", out)
+	}
+	if strings.Contains(out, ">a<") || strings.Contains(out, ">e<") {
+		t.Fatalf("offset/limit not applied: %q", out)
+	}
+}
+
+func TestIfchangedSuppressesRepeats(t *testing.T) {
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"category": "A", "name": "a1"},
+			map[string]any{"category": "A", "name": "a2"},
+			map[string]any{"category": "B", "name": "b1"},
+			map[string]any{"category": "B", "name": "b2"},
+			map[string]any{"category": "A", "name": "a3"}, // back to A
+		},
+	}
+	out, err := Render(
+		`{% for it in items %}{% ifchanged %}[{{ it.category }}]{% endifchanged %}{{ it.name }} {% endfor %}`,
+		data,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[A]a1 a2 [B]b1 b2 [A]a3 "
+	if out != want {
+		t.Fatalf("got %q, want %q", out, want)
+	}
+}
+
+func TestDocTagDiscardsBody(t *testing.T) {
+	out, err := Render(`before {% doc %}@param x A widget{% enddoc %}after`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "before after" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestDocTagDoesNotInterpretBody(t *testing.T) {
+	// Liquid syntax inside {% doc %} is not parsed/executed.
+	out, err := Render(`{% doc %}{{ undefined.thing | bogus }}{% enddoc %}ok`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "ok" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestUnclosedDocErrors(t *testing.T) {
+	_, err := Parse(`{% doc %}forever`)
+	if err == nil || !strings.Contains(err.Error(), "unterminated") {
+		t.Fatalf("expected unterminated error, got %v", err)
+	}
+}
+
+func TestRenderErrorCarriesTemplateName(t *testing.T) {
+	tmpl := MustParse(`{{ x | divided_by: 0 }}`).WithName("alerts.liquid")
+	_, err := tmpl.Render(map[string]any{"x": 10})
+	var re *RenderError
+	if !errors.As(err, &re) {
+		t.Fatalf("expected RenderError, got %T: %v", err, err)
+	}
+	if re.TemplateName != "alerts.liquid" {
+		t.Errorf("expected TemplateName=alerts.liquid, got %q", re.TemplateName)
+	}
+	if !strings.Contains(re.Error(), "alerts.liquid") {
+		t.Errorf("Error() missing template name: %q", re.Error())
+	}
+}
+
+func TestPartialErrorCarriesPartialName(t *testing.T) {
+	tmpl := MustParse(`{% render "broken" %}`).WithLoader(MapLoader{
+		"broken": `oh no {{ 10 | divided_by: 0 }}`,
+	})
+	_, err := tmpl.Render(nil)
+	var re *RenderError
+	if !errors.As(err, &re) {
+		t.Fatalf("expected RenderError, got %T: %v", err, err)
+	}
+	if re.TemplateName != "broken" {
+		t.Errorf("expected TemplateName=broken, got %q", re.TemplateName)
+	}
+}
+
+func TestParseErrorCarriesPartialNameOnLoaderFailure(t *testing.T) {
+	tmpl := MustParse(`{% render "bad" %}`).WithLoader(MapLoader{
+		"bad": `{% if missing_endif`,
+	})
+	_, err := tmpl.Render(nil)
+	var pe *ParseError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected ParseError, got %T: %v", err, err)
+	}
+	if pe.TemplateName != "bad" {
+		t.Errorf("expected TemplateName=bad, got %q", pe.TemplateName)
+	}
+}
+
+func TestIfchangedSharesRegisterAcrossBlocks(t *testing.T) {
+	// Two distinct {% ifchanged %} blocks share state per Shopify. If A
+	// emits "x" and B's body also evaluates to "x", B is suppressed.
+	out, err := Render(
+		`{% for i in items %}{% ifchanged %}A:{{ i }}{% endifchanged %}{% ifchanged %}B:{{ i }}{% endifchanged %} {% endfor %}`,
+		map[string]any{"items": []any{1, 2, 2}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// i=1: A emits "A:1", saved. B evaluates "B:1", different → emits "B:1", saved.
+	// i=2: A evaluates "A:2", different → emits. B evaluates "B:2", different → emits.
+	// i=2: A evaluates "A:2", same as last (B:2 → A:2 different actually)
+	// Trace carefully:
+	// last="" → A:"A:1" → emit, last="A:1"
+	//   → B:"B:1" → diff, emit, last="B:1"  → " "
+	// → A:"A:2" → diff, emit, last="A:2"
+	//   → B:"B:2" → diff, emit, last="B:2" → " "
+	// → A:"A:2" → diff (last="B:2"), emit, last="A:2"
+	//   → B:"B:2" → diff (last="A:2"), emit, last="B:2" → " "
+	want := "A:1B:1 A:2B:2 A:2B:2 "
+	if out != want {
+		t.Fatalf("got %q\nwant %q", out, want)
+	}
+}
+
+func TestNestedComments(t *testing.T) {
+	out, err := Render(
+		`A{% comment %}outer {% comment %}inner{% endcomment %} still in outer{% endcomment %}B`,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "AB" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestCommentSkipsNestedRaw(t *testing.T) {
+	// `{% endcomment %}` inside a `{% raw %}…{% endraw %}` must NOT close
+	// the outer comment.
+	out, err := Render(
+		`A{% comment %}before {% raw %}{% endcomment %}{% endraw %} after{% endcomment %}B`,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "AB" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+// pointerOnly has its accessor on a pointer receiver — historically
+// unreachable when the struct was passed by value via a map.
+type pointerOnly struct{ name string }
+
+func (p *pointerOnly) Display() string { return "<<" + p.name + ">>" }
+
+func TestMethodDispatchHandlesPointerReceiverOnValueStruct(t *testing.T) {
+	// Pass by value; the data path goes through interface{} and reflect
+	// can't normally see *T methods on a T value. callTemplateMethod
+	// should promote to a pointer.
+	out, err := Render(`{{ p.Display }}`, map[string]any{
+		"p": pointerOnly{name: "Ada"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "<<Ada>>" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+// failingMethod has a (T, error) accessor that returns an error.
+type failingMethod struct{}
+
+func (failingMethod) Risky() (string, error) {
+	return "", fmt.Errorf("denied")
+}
+
+func TestErrorReturningMethodTreatedAsUndefined(t *testing.T) {
+	// In strict mode, a (T, error) method that errored should surface as
+	// undefined-property, not silently render empty.
+	_, err := Render(`{{ x.Risky }}`,
+		map[string]any{"x": failingMethod{}}, StrictVariables())
+	if err == nil {
+		t.Fatal("expected strict-mode error for failing method")
+	}
+	if !strings.Contains(err.Error(), "undefined property") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestTablerowNilCollectionReturnsEmpty(t *testing.T) {
+	out, err := Render(
+		`{% tablerow x in missing %}{{ x }}{% endtablerow %}`, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "" {
+		t.Fatalf("got %q, want empty", out)
+	}
+}
+
+func TestTablerowAcceptsRangeAttribute(t *testing.T) {
+	// Shopify accepts (and silently ignores) a `range:` attribute. Templates
+	// that include it must parse without error.
+	out, err := Render(
+		`{% tablerow x in items cols: 2 range: items %}{{ x }}{% endtablerow %}`,
+		map[string]any{"items": []any{"a", "b", "c"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, ">a<") || !strings.Contains(out, ">b<") || !strings.Contains(out, ">c<") {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestTemplateNameQuotedInError(t *testing.T) {
+	// Prevent log injection: the template name appears %q-quoted, so
+	// embedded newlines are escaped.
+	tmpl := MustParse(`{{ 10 | divided_by: 0 }}`).WithName("evil\nlevel=INFO")
+	_, err := tmpl.Render(nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "\nlevel=INFO") {
+		t.Fatalf("error contains raw newline: %q", err.Error())
 	}
 }

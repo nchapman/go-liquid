@@ -18,12 +18,15 @@ const maxRangeSize = 1_000_000
 // evaluator executes a parsed template.
 type evaluator struct {
 	ctx             *context
-	cycleCounters   map[string]int // tracks cycle position for each group
-	counterVars     map[string]int // tracks increment/decrement counters
+	cycleCounters   map[string]int // cycle position for each group
+	counterVars     map[string]int // increment/decrement counters
+	ifchangedLast   string         // last value emitted by ANY {% ifchanged %}
+	ifchangedSet    bool           // whether ifchangedLast has ever been set
 	partials        *partialCache  // nil if no loader configured
 	partialDepth    int            // current depth through render/include
 	strictVariables bool           // error on undefined identifier
 	strictFilters   bool           // error on unknown filter name
+	templateName    string         // optional, surfaced on RenderError
 }
 
 func newEvaluator(data map[string]any) *evaluator {
@@ -58,7 +61,7 @@ func (e *evaluator) evalNode(node Node) (string, error) {
 	// positions and wrapAtNode is a no-op for *RenderError. errBreak and
 	// errContinue are control-flow signals, not errors — leave them alone.
 	if err != nil && err != errBreak && err != errContinue {
-		err = wrapAtNode(node, err)
+		err = wrapAtNode(node, err, e.templateName)
 	}
 	return out, err
 }
@@ -132,6 +135,15 @@ func (e *evaluator) evalNodeInner(node Node) (string, error) {
 
 	case *LiquidTag:
 		return e.evalNodes(n.Body)
+
+	case *TablerowTag:
+		return e.evalTablerowTag(n)
+
+	case *IfchangedTag:
+		return e.evalIfchangedTag(n)
+
+	case *DocTag:
+		return "", nil
 
 	default:
 		return "", nil
@@ -323,6 +335,9 @@ func (e *evaluator) renderPartialIsolated(partial *Template, data map[string]any
 	sub := newEvaluator(data)
 	sub.partials = e.partials
 	sub.partialDepth = e.partialDepth + 1
+	sub.strictVariables = e.strictVariables
+	sub.strictFilters = e.strictFilters
+	sub.templateName = partial.name
 	return sub.evaluate(partial.ast)
 }
 
@@ -533,7 +548,7 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		val := e.ctx.get(x.Name)
 		if val == nil && e.strictVariables {
 			if _, ok := e.ctx.lookup(x.Name); !ok {
-				return nil, wrapAtNode(x, fmt.Errorf("undefined variable %q", x.Name))
+				return nil, wrapAtNode(x, fmt.Errorf("undefined variable %q", x.Name), e.templateName)
 			}
 		}
 		return val, nil
@@ -548,7 +563,7 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		}
 		val, ok := getPropertyOK(obj, x.Property)
 		if !ok && e.strictVariables {
-			return nil, wrapAtNode(x, fmt.Errorf("undefined property %q", x.Property))
+			return nil, wrapAtNode(x, fmt.Errorf("undefined property %q", x.Property), e.templateName)
 		}
 		return val, nil
 
@@ -563,7 +578,7 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		}
 		val, ok := getIndexOK(obj, idx)
 		if !ok && e.strictVariables {
-			return nil, wrapAtNode(x, fmt.Errorf("undefined index %v", idx))
+			return nil, wrapAtNode(x, fmt.Errorf("undefined index %v", idx), e.templateName)
 		}
 		return val, nil
 
@@ -600,19 +615,19 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		if fn, ok := kwargFilters[x.Name]; ok {
 			out := fn(input, args, kwargs)
 			if fe, ok := out.(filterError); ok {
-				return nil, wrapAtNode(x, fe.err)
+				return nil, wrapAtNode(x, fe.err, e.templateName)
 			}
 			return out, nil
 		}
 		if fn, ok := getFilter(x.Name); ok {
 			out := fn(input, args...)
 			if fe, ok := out.(filterError); ok {
-				return nil, wrapAtNode(x, fe.err)
+				return nil, wrapAtNode(x, fe.err, e.templateName)
 			}
 			return out, nil
 		}
 		if e.strictFilters {
-			return nil, wrapAtNode(x, fmt.Errorf("unknown filter %q", x.Name))
+			return nil, wrapAtNode(x, fmt.Errorf("unknown filter %q", x.Name), e.templateName)
 		}
 		// Unknown filter — return input unchanged (lax Liquid semantics).
 		return input, nil
@@ -685,6 +700,75 @@ func (e *evaluator) evalBinaryExpr(expr *BinaryExpr) (any, error) {
 	}
 }
 
+// Drop opts a Go type into Liquid's "drop" model: the type controls which
+// properties templates can access. When a value passed to Render
+// implements Drop, property lookups (e.g. {{ obj.x }} or {{ obj["x"] }})
+// route through LiquidLookup instead of reflection on fields/methods.
+//
+// Use Drop when you want a Go object to expose computed properties to
+// templates without auto-dispatching every public zero-arg method.
+type Drop interface {
+	// LiquidLookup returns the value for the given key and reports whether
+	// the key is defined. Returning (nil, true) is meaningful: it means
+	// "defined but no value" and prevents strict-variables errors.
+	LiquidLookup(key string) (any, bool)
+}
+
+// errType is reflect.TypeOf((*error)(nil)).Elem(), used to detect
+// error-typed return values from struct methods.
+var errType = reflect.TypeOf((*error)(nil)).Elem()
+
+// callTemplateMethod invokes a zero-arg method by name and returns the
+// computed value if its return signature is consistent with a "data"
+// accessor — a single non-error return, or (T, error). Returns ok=false
+// for methods that don't fit (zero returns, error-only returns,
+// multi-value returns), so side-effecting methods like Close() error and
+// Stop() are not invoked from templates.
+//
+// Value structs whose method only exists on the pointer receiver are
+// handled by copying the value to a fresh addressable location and
+// calling on the pointer — so func (*T) Foo() is reachable even when a
+// T was passed by value through a map/interface.
+//
+// To expose a side-effecting or non-conforming method, wrap the value in
+// a Drop.
+func callTemplateMethod(obj any, name string) (any, bool) {
+	rv := reflect.ValueOf(obj)
+	method := rv.MethodByName(name)
+	if !method.IsValid() && rv.Kind() == reflect.Struct {
+		// Promote to *T so pointer-receiver methods become visible.
+		ptr := reflect.New(rv.Type())
+		ptr.Elem().Set(rv)
+		method = ptr.MethodByName(name)
+	}
+	if !method.IsValid() || method.Type().NumIn() != 0 {
+		return nil, false
+	}
+	mt := method.Type()
+	switch mt.NumOut() {
+	case 1:
+		if mt.Out(0) == errType {
+			// Returns just an error — almost certainly a mutator (Close,
+			// Save, Validate). Skip rather than discard the error.
+			return nil, false
+		}
+		return method.Call(nil)[0].Interface(), true
+	case 2:
+		if mt.Out(1) != errType {
+			return nil, false
+		}
+		results := method.Call(nil)
+		if errVal, _ := results[1].Interface().(error); errVal != nil {
+			// Method ran and reported an error. Treat the property as
+			// undefined so strict-variables mode surfaces the failure
+			// instead of silently rendering empty.
+			return nil, false
+		}
+		return results[0].Interface(), true
+	}
+	return nil, false
+}
+
 // getProperty returns a property value, or nil if absent.
 func getProperty(obj any, prop string) any {
 	v, _ := getPropertyOK(obj, prop)
@@ -701,6 +785,14 @@ func getProperty(obj any, prop string) any {
 func getPropertyOK(obj any, prop string) (any, bool) {
 	if obj == nil {
 		return nil, false
+	}
+
+	// Drop opts the type into custom property resolution (Shopify Liquid's
+	// Drop equivalent). When implemented, methods on the underlying type
+	// are NOT auto-dispatched — the Drop is the sole source of truth.
+	if d, ok := obj.(Drop); ok {
+		v, present := d.LiquidLookup(prop)
+		return v, present
 	}
 
 	if m, ok := obj.(map[string]any); ok {
@@ -732,13 +824,8 @@ func getPropertyOK(obj any, prop string) (any, bool) {
 		if field.IsValid() && field.CanInterface() {
 			return field.Interface(), true
 		}
-		method := reflect.ValueOf(obj).MethodByName(prop)
-		if method.IsValid() && method.Type().NumIn() == 0 {
-			results := method.Call(nil)
-			if len(results) > 0 {
-				return results[0].Interface(), true
-			}
-			return nil, true
+		if v, ok := callTemplateMethod(obj, prop); ok {
+			return v, true
 		}
 	}
 
@@ -965,6 +1052,136 @@ func (e *evaluator) evalDecrementTag(tag *DecrementTag) (string, error) {
 	e.counterVars[tag.Variable]--
 	val := e.counterVars[tag.Variable]
 	return toString(val), nil
+}
+
+// evalTablerowTag emits HTML <tr>/<td> markup over a collection. Output
+// matches Shopify's exactly: `<tr class="row1">\n` opens, each item is
+// wrapped in `<td class="colN">…</td>`, every `cols` items closes the
+// current row and opens the next, and the final `</tr>\n` closes.
+func (e *evaluator) evalTablerowTag(tag *TablerowTag) (string, error) {
+	collection, err := e.evalExpr(tag.Collection)
+	if err != nil {
+		return "", err
+	}
+	// Shopify short-circuits to "" when the collection itself is nil,
+	// only emitting <tr>…</tr> markup for actual (possibly empty) arrays.
+	if collection == nil {
+		return "", nil
+	}
+	items := toSlice(collection)
+
+	if tag.Offset != nil {
+		off, err := e.evalExpr(tag.Offset)
+		if err != nil {
+			return "", err
+		}
+		n := int(toInt(toNumber(off)))
+		if n > 0 && n < len(items) {
+			items = items[n:]
+		} else if n >= len(items) {
+			items = nil
+		}
+	}
+	if tag.Limit != nil {
+		lim, err := e.evalExpr(tag.Limit)
+		if err != nil {
+			return "", err
+		}
+		n := int(toInt(toNumber(lim)))
+		if n >= 0 && n < len(items) {
+			items = items[:n]
+		}
+	}
+
+	cols := len(items)
+	if tag.Cols != nil {
+		v, err := e.evalExpr(tag.Cols)
+		if err != nil {
+			return "", err
+		}
+		if n := int(toInt(toNumber(v))); n > 0 {
+			cols = n
+		}
+	}
+	if cols == 0 {
+		// Match Shopify: empty collection still emits a single empty row.
+		return "<tr class=\"row1\">\n</tr>\n", nil
+	}
+
+	e.ctx = e.ctx.push()
+	defer func() { e.ctx = e.ctx.parent }()
+
+	var sb strings.Builder
+	sb.WriteString("<tr class=\"row1\">\n")
+	length := len(items)
+	for i, item := range items {
+		col := i%cols + 1
+		row := i/cols + 1
+		colFirst := col == 1
+		colLast := col == cols || i == length-1
+		isLast := i == length-1
+
+		e.ctx.set(tag.Variable, item)
+		e.ctx.set("tablerowloop", map[string]any{
+			"length":    length,
+			"index":     i + 1,
+			"index0":    i,
+			"rindex":    length - i,
+			"rindex0":   length - i - 1,
+			"col":       col,
+			"col0":      col - 1,
+			"row":       row,
+			"first":     i == 0,
+			"last":      isLast,
+			"col_first": colFirst,
+			"col_last":  colLast,
+		})
+
+		fmt.Fprintf(&sb, "<td class=\"col%d\">", col)
+		body, err := e.evalNodes(tag.Body)
+		if err == errBreak {
+			sb.WriteString(body)
+			sb.WriteString("</td>")
+			break
+		}
+		if err == errContinue {
+			sb.WriteString(body)
+			sb.WriteString("</td>")
+			if colLast && !isLast {
+				fmt.Fprintf(&sb, "</tr>\n<tr class=\"row%d\">", row+1)
+			}
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		sb.WriteString(body)
+		sb.WriteString("</td>")
+
+		if colLast && !isLast {
+			fmt.Fprintf(&sb, "</tr>\n<tr class=\"row%d\">", row+1)
+		}
+	}
+	sb.WriteString("</tr>\n")
+	return sb.String(), nil
+}
+
+// evalIfchangedTag emits the body only when its rendering differs from
+// the most recent emission. Liquid uses a SINGLE shared register per
+// render — every {% ifchanged %} block in the template compares against
+// the same slot, so two distinct blocks emitting the same value will see
+// the second suppressed. This matches Shopify's context.registers[:ifchanged].
+func (e *evaluator) evalIfchangedTag(tag *IfchangedTag) (string, error) {
+	out, err := e.evalNodes(tag.Body)
+	if err != nil {
+		return "", err
+	}
+	if e.ifchangedSet && e.ifchangedLast == out {
+		return "", nil
+	}
+	e.ifchangedLast = out
+	e.ifchangedSet = true
+	return out, nil
 }
 
 // Control flow errors for break/continue.

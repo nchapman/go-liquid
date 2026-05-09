@@ -279,6 +279,48 @@ type DecrementTag struct {
 func (t *DecrementTag) node()                   {}
 func (t *DecrementTag) Pos() (line, column int) { return t.Line, t.Column }
 
+// TablerowTag represents {% tablerow x in collection [cols: N] [limit: M]
+// [offset: K] %}body{% endtablerow %}. Each iteration emits a <td>; rows
+// wrap every `cols` items in <tr> markers. tablerowloop is exposed inside
+// the body with col, row, index, length, first/last, col_first/col_last.
+type TablerowTag struct {
+	Variable   string
+	Collection Expression
+	Body       []Node
+	Cols       Expression
+	Limit      Expression
+	Offset     Expression
+	Line       int
+	Column     int
+}
+
+func (t *TablerowTag) node()                   {}
+func (t *TablerowTag) Pos() (line, column int) { return t.Line, t.Column }
+
+// IfchangedTag represents {% ifchanged %}body{% endifchanged %}. The body
+// is rendered but only emitted when its output differs from the last
+// emission of the same block (tracked per-render via the evaluator).
+type IfchangedTag struct {
+	Body   []Node
+	Line   int
+	Column int
+}
+
+func (t *IfchangedTag) node()                   {}
+func (t *IfchangedTag) Pos() (line, column int) { return t.Line, t.Column }
+
+// DocTag represents {% doc %}content{% enddoc %}. The body is captured as
+// raw text and discarded at render time. Useful for inline documentation
+// (LiquidDoc) and rejected by tooling that doesn't recognize the tag.
+type DocTag struct {
+	Content string
+	Line    int
+	Column  int
+}
+
+func (t *DocTag) node()                   {}
+func (t *DocTag) Pos() (line, column int) { return t.Line, t.Column }
+
 // LiquidTag represents {% liquid ... %}, a block of newline-separated tag
 // statements written without per-line {% %} delimiters. The body is parsed
 // as a sequence of regular tags at parse time and stored here.

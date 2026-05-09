@@ -487,40 +487,147 @@ func (l *lexer) matchAhead(s string) bool {
 	return true
 }
 
-// scanCommentBlock scans until we find {% endcomment %} or {%- endcomment -%} and returns the content.
-// Called after {% comment %} has been parsed. Returns (content, line, col, trimRight).
+// scanCommentBlock scans the body of {% comment %} until it finds the
+// matching {% endcomment %} (or trim variant), tracking nesting so that
+// `{% comment %}{% comment %}…{% endcomment %}{% endcomment %}` correctly
+// pairs each opener with its closer (matches Shopify's comment.rb).
+// `{% raw %}…{% endraw %}` blocks within the body are skipped over so an
+// `{% endcomment %}` token inside raw text doesn't terminate prematurely.
 func (l *lexer) scanCommentBlock() (string, int, int, bool) {
 	startPos := l.pos
 	startLine := l.line
 	startCol := l.column
+	depth := 1
 
 	for l.ch != 0 {
-		// Look for {% endcomment %} or {%- endcomment -%}
+		if l.ch != '{' || l.peekChar() != '%' {
+			l.readChar()
+			continue
+		}
+		// Save the position of this '{%' so we can skip past it if the tag
+		// turns out to be irrelevant.
+		savePos := l.pos
+		l.readChar() // {
+		l.readChar() // %
+		for l.ch == ' ' || l.ch == '\t' || l.ch == '-' {
+			l.readChar()
+		}
+
+		switch {
+		case l.ch == 'c' && l.matchAhead("omment"):
+			depth++
+			for range 7 { // "comment"
+				l.readChar()
+			}
+		case l.ch == 'e' && l.matchAhead("ndcomment"):
+			depth--
+			for range 10 { // "endcomment"
+				l.readChar()
+			}
+			if depth == 0 {
+				for l.ch == ' ' || l.ch == '\t' {
+					l.readChar()
+				}
+				trimRight := false
+				if l.ch == '-' {
+					trimRight = true
+					l.readChar()
+				}
+				if l.ch == '%' && l.peekChar() == '}' {
+					l.readChar()
+					l.readChar()
+					l.mode = modeText
+					return l.input[startPos:savePos], startLine, startCol, trimRight
+				}
+			}
+		case l.ch == 'r' && l.matchAhead("aw"):
+			// Skip past the raw body so its content doesn't consume our
+			// nesting counter accidentally.
+			for range 3 { // "raw"
+				l.readChar()
+			}
+			// Walk to the closing %} of `{% raw %}`.
+			for l.ch != 0 && !(l.ch == '%' && l.peekChar() == '}') {
+				l.readChar()
+			}
+			if l.ch != 0 {
+				l.readChar() // %
+				l.readChar() // }
+			}
+			// Now consume up to and including {% endraw %}.
+			for l.ch != 0 {
+				if l.ch == '{' && l.peekChar() == '%' {
+					save2 := l.pos
+					l.readChar()
+					l.readChar()
+					for l.ch == ' ' || l.ch == '\t' || l.ch == '-' {
+						l.readChar()
+					}
+					if l.ch == 'e' && l.matchAhead("ndraw") {
+						for range 6 { // "endraw"
+							l.readChar()
+						}
+						for l.ch != 0 && !(l.ch == '%' && l.peekChar() == '}') {
+							l.readChar()
+						}
+						if l.ch != 0 {
+							l.readChar() // %
+							l.readChar() // }
+						}
+						break
+					}
+					// Not endraw — rewind to just past the {% so we don't
+					// double-skip and miss content.
+					_ = save2
+				}
+				l.readChar()
+			}
+		default:
+			// Some other tag token — keep walking byte by byte. We are
+			// already past the `{%`; the next iteration of the outer loop
+			// will pick up wherever we land.
+		}
+	}
+
+	// EOF reached without matching endcomment.
+	return l.input[startPos:l.pos], startLine, startCol, false
+}
+
+// scanRawBodyTo scans the raw text body of a block tag until it finds
+// the matching `{% endTag %}` (with optional trim markers). Returns
+// (content, startLine, startCol, trimRight, closed). closed is false when
+// EOF was reached without a terminator. The lexer is left in modeText
+// positioned just past the close (when closed is true).
+//
+// `endTag` is the bare keyword (e.g. "endcomment", "enddoc"). The block
+// body is captured literally — Liquid syntax inside is not interpreted.
+func (l *lexer) scanRawBodyTo(endTag string) (content string, startLine, startCol int, trimRight, closed bool) {
+	startPos := l.pos
+	startLine = l.line
+	startCol = l.column
+
+	endTail := endTag[1:]
+
+	for l.ch != 0 {
 		if l.ch == '{' && l.peekChar() == '%' {
 			savePos := l.pos
 
 			l.readChar() // {
 			l.readChar() // %
 
-			// Skip whitespace and optional -
 			for l.ch == ' ' || l.ch == '\t' || l.ch == '-' {
 				l.readChar()
 			}
 
-			// Check for "endcomment"
-			if l.ch == 'e' && l.matchAhead("ndcomment") {
-				l.readChar() // consume 'e'
-				for range 9 {
+			if l.ch == endTag[0] && l.matchAhead(endTail) {
+				l.readChar()
+				for range len(endTail) {
 					l.readChar()
 				}
-
-				// Skip whitespace
 				for l.ch == ' ' || l.ch == '\t' {
 					l.readChar()
 				}
-
-				// Check for -%} or %}
-				trimRight := false
+				trimRight = false
 				if l.ch == '-' {
 					trimRight = true
 					l.readChar()
@@ -529,17 +636,14 @@ func (l *lexer) scanCommentBlock() (string, int, int, bool) {
 					l.readChar() // %
 					l.readChar() // }
 					l.mode = modeText
-					return l.input[startPos:savePos], startLine, startCol, trimRight
+					return l.input[startPos:savePos], startLine, startCol, trimRight, true
 				}
 			}
-
-			// Not endcomment, continue searching
 		}
 		l.readChar()
 	}
 
-	// EOF reached without finding endcomment
-	return l.input[startPos:l.pos], startLine, startCol, false
+	return l.input[startPos:l.pos], startLine, startCol, false, false
 }
 
 // scanToTagClose consumes everything up to and including the next %} or
