@@ -37,6 +37,20 @@ var filters = map[string]FilterFunc{
 	"truncatewords": filterTruncateWords,
 	"slice":         filterSlice,
 	"newline_to_br": filterNewlineToBr,
+	"escape_once":   filterEscapeOnce,
+	"url_encode":    filterURLEncode,
+	"url_decode":    filterURLDecode,
+	"strip_html":    filterStripHTML,
+	"strip_newlines": filterStripNewlines,
+	"squish":        filterSquish,
+	"replace_last":  filterReplaceLast,
+	"remove_last":   filterRemoveLast,
+
+	// Base64
+	"base64_encode":          filterBase64Encode,
+	"base64_decode":          filterBase64Decode,
+	"base64_url_safe_encode": filterBase64URLSafeEncode,
+	"base64_url_safe_decode": filterBase64URLSafeDecode,
 
 	// Array filters
 	"first":        filterFirst,
@@ -48,7 +62,10 @@ var filters = map[string]FilterFunc{
 	"sort_natural": filterSortNatural,
 	"map":          filterMap,
 	"where":        filterWhere,
+	"reject":       filterReject,
 	"find":         filterFind,
+	"find_index":   filterFindIndex,
+	"has":          filterHas,
 	"uniq":         filterUniq,
 	"compact":      filterCompact,
 	"concat":       filterConcat,

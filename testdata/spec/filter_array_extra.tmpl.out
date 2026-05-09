@@ -1,0 +1,6 @@
+admins: alice,carol
+non-admins: bob
+has admin: true
+has owner: false
+first editor index: 0
+no match index: n/a

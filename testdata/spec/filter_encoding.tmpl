@@ -1,0 +1,15 @@
+{# data: {"raw": "<a href=\"x\">Hello & welcome</a>", "already": "Tom &amp; Jerry", "url": "hello world & co"} #}
+escape_once1: {{ raw | escape_once }}
+escape_once2: {{ already | escape_once }}
+url_encode: {{ url | url_encode }}
+url_decode: {{ "hello+world" | url_decode }}
+strip_html: {{ "<p>One<script>bad()</script>Two<!--c--><b>Three</b></p>" | strip_html }}
+strip_newlines: [{{ "a
+b
+c" | strip_newlines }}]
+squish: [{{ "  a   b
+c  " | squish }}]
+base64: {{ "Hello, world!" | base64_encode }} -> {{ "SGVsbG8sIHdvcmxkIQ==" | base64_decode }}
+url-safe base64: {{ "??>>" | base64_url_safe_encode }} -> {{ "Pz8-Pg==" | base64_url_safe_decode }}
+replace_last: {{ "one two two three" | replace_last: "two", "TWO" }}
+remove_last: {{ "one two two three" | remove_last: "two" }}

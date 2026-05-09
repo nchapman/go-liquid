@@ -1,0 +1,7 @@
+{# data: {"users": [{"name":"alice","admin":true,"role":"editor"},{"name":"bob","admin":false,"role":"viewer"},{"name":"carol","admin":true,"role":"editor"}]} #}
+admins: {{ users | where: "admin", true | map: "name" | join: "," }}
+non-admins: {{ users | reject: "admin", true | map: "name" | join: "," }}
+has admin: {{ users | has: "admin", true }}
+has owner: {{ users | has: "role", "owner" }}
+first editor index: {{ users | find_index: "role", "editor" }}
+no match index: {{ users | find_index: "role", "nope" | default: "n/a" }}

@@ -1,0 +1,11 @@
+escape_once1: &lt;a href=&quot;x&quot;&gt;Hello &amp; welcome&lt;/a&gt;
+escape_once2: Tom &amp; Jerry
+url_encode: hello+world+%26+co
+url_decode: hello world
+strip_html: OneTwoThree
+strip_newlines: [abc]
+squish: [a b c]
+base64: SGVsbG8sIHdvcmxkIQ== -> Hello, world!
+url-safe base64: Pz8-Pg== -> ??>>
+replace_last: one two TWO three
+remove_last: one two  three
