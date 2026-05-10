@@ -629,12 +629,22 @@ func (p *parser) parseLiquidTag() (Node, error) {
 	var sb strings.Builder
 	for _, raw := range strings.Split(body, "\n") {
 		stripped := strings.TrimSpace(raw)
+		// Ruby tolerates any number of leading `liquid` keywords on a line —
+		// they are no-ops, so `liquid liquid echo "x"` is just `echo "x"`.
+		// Strip them before classifying the line.
+		for stripped == "liquid" || strings.HasPrefix(stripped, "liquid ") || strings.HasPrefix(stripped, "liquid\t") {
+			if stripped == "liquid" {
+				stripped = ""
+				break
+			}
+			stripped = strings.TrimSpace(stripped[len("liquid"):])
+		}
 		if stripped == "" {
 			continue
 		}
 		first, _, _ := strings.Cut(stripped, " ")
 		switch first {
-		case "raw", "endraw", "comment", "endcomment", "liquid":
+		case "raw", "endraw", "comment", "endcomment":
 			return nil, &ParseError{
 				Message: "tag '" + first + "' is not allowed inside {% liquid %} block",
 				Line:    line,

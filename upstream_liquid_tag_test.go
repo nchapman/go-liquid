@@ -92,18 +92,15 @@ func TestUpstreamLiquidTag(t *testing.T) {
 	})
 
 	t.Run("test_nested_liquid_tags", func(t *testing.T) {
-		t.Skip("TODO: support `liquid` keyword as a no-op prefix inside a {% liquid %} body (Ruby parity)")
 		src := "{%- liquid\n  liquid\n    if true\n      echo \"good\"\n    endif\n-%}\n"
 		renderEq(t, "nested-liquid", src, nil, "good")
 	})
 
 	t.Run("test_nested_liquid_tags_on_same_line", func(t *testing.T) {
-		t.Skip("TODO: support repeated `liquid` keyword on a single liquid-body line")
 		renderEq(t, "same-line", "{%- liquid liquid liquid echo \"good\" -%}\n", nil, "good")
 	})
 
 	t.Run("test_nested_liquid_liquid_is_not_skipped_if_used_in_non_tag_position", func(t *testing.T) {
-		t.Skip("TODO: distinguish leading `liquid` keyword from `liquid` used as variable name")
 		data := map[string]any{"liquid": "liquid"}
 		renderEq(t, "liquid-as-var", "{%- liquid liquid liquid echo liquid -%}\n", data, "liquid")
 	})

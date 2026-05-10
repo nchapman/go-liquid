@@ -848,7 +848,6 @@ func TestLiquidBlockRejectsBlockTags(t *testing.T) {
 	cases := []string{
 		"{% liquid\n  raw\n  hello\n  endraw\n%}",
 		"{% liquid\n  comment\n  hello\n  endcomment\n%}",
-		"{% liquid\n  liquid\n%}",
 	}
 	for _, src := range cases {
 		_, err := Parse(src)
@@ -859,6 +858,19 @@ func TestLiquidBlockRejectsBlockTags(t *testing.T) {
 		if !strings.Contains(err.Error(), "not allowed inside") {
 			t.Errorf("error doesn't mention disallowed: %v", err)
 		}
+	}
+}
+
+func TestLiquidBlockBareLiquidLineIsNoOp(t *testing.T) {
+	// A bare `liquid` line inside a {% liquid %} body is a Ruby-parity
+	// no-op: after stripping the leading keyword the line is empty, so it
+	// must be silently dropped (not raised, not rendered).
+	got, err := Render("{% liquid\n  liquid\n%}", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("got %q, want empty", got)
 	}
 }
 
