@@ -576,6 +576,34 @@ func TestForTag(t *testing.T) {
 	}
 }
 
+// TestForReversedDoesNotMutateInput guards against an aliasing regression:
+// `{% for x in xs reversed %}` must not reverse the caller's slice in place.
+// Two consecutive renders against the same bound data must produce the same
+// output.
+func TestForReversedDoesNotMutateInput(t *testing.T) {
+	items := []any{1, 2, 3, 4}
+	original := append([]any(nil), items...)
+
+	tmpl := "{% for x in xs reversed %}{{ x }}{% endfor %}"
+	want := "4321"
+
+	for i := range 2 {
+		out, err := Render(tmpl, map[string]any{"xs": items})
+		if err != nil {
+			t.Fatalf("render %d: %v", i, err)
+		}
+		if out != want {
+			t.Errorf("render %d: got %q want %q", i, out, want)
+		}
+	}
+	for i, v := range items {
+		if v != original[i] {
+			t.Errorf("input slice mutated: items=%v want %v", items, original)
+			break
+		}
+	}
+}
+
 func TestBreakContinue(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -706,6 +734,13 @@ func TestCommentTag(t *testing.T) {
 			template: "A{% comment %}Line 1\nLine 2{% endcomment %}B",
 			expected: "AB",
 		},
+		{
+			// `commentary` must not match the `comment` keyword and inflate
+			// the nesting depth — keyword boundary.
+			name:     "comment-prefixed identifier doesn't increase depth",
+			template: "A{% comment %}{% commentary %}{% endcomment %}B",
+			expected: "AB",
+		},
 	}
 
 	for _, tt := range tests {
@@ -736,6 +771,12 @@ func TestRawTag(t *testing.T) {
 			name:     "raw preserves tags",
 			template: "{% raw %}{% if true %}yes{% endif %}{% endraw %}",
 			expected: "{% if true %}yes{% endif %}",
+		},
+		{
+			// `endrawful` must not match `endraw` — keyword boundary.
+			name:     "raw not closed by endraw-prefixed identifier",
+			template: "{% raw %}{% endrawful %}{% endraw %}",
+			expected: "{% endrawful %}",
 		},
 	}
 

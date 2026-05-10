@@ -69,7 +69,7 @@ func TestResourceLimitsCaptureChargedIncrementally(t *testing.T) {
 func TestResourceLimitsCumulative(t *testing.T) {
 	tmpl := MustParse(`{% assign x = "abcdefghij" %}`)
 	limits := &ResourceLimits{CumulativeAssignScoreLimit: 25}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if _, err := tmpl.Render(nil, WithLimits(limits)); err != nil {
 			t.Fatalf("render %d: %v", i, err)
 		}

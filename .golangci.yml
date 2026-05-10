@@ -1,0 +1,151 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - revive
+    - gosec
+    - gocritic
+    - unparam
+    - misspell
+    - prealloc
+    - errorlint
+    - nolintlint
+    - copyloopvar
+    - intrange
+    - bodyclose
+    - dupword
+    - durationcheck
+    - errname
+    - exhaustive
+    - makezero
+    - nilerr
+    - noctx
+    - rowserrcheck
+    - sqlclosecheck
+    - unconvert
+    - wastedassign
+    - whitespace
+    # Complexity
+    - gocyclo
+    - gocognit
+    - funlen
+    - nestif
+    - cyclop
+
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        # `shadow` is excluded from default `go vet` for good reason: it flags
+        # the idiomatic `val, err := ...` re-declaration inside if/for blocks.
+        - shadow
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+          arguments:
+            - disableStutteringCheck
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: unused-parameter
+        - name: var-declaration
+        - name: var-naming
+    gosec:
+      excludes:
+        - G104  # duplicates errcheck
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - ifElseChain
+        - hugeParam
+        - rangeValCopy
+    staticcheck:
+      checks:
+        - all
+    exhaustive:
+      default-signifies-exhaustive: true
+    gocyclo:
+      min-complexity: 20
+    gocognit:
+      min-complexity: 30
+    cyclop:
+      max-complexity: 20
+      package-average: 10
+    funlen:
+      lines: 120
+      statements: 60
+      ignore-comments: true
+    nestif:
+      min-complexity: 6
+
+  exclusions:
+    generated: lax
+    presets:
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Tests get more leeway.
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - gocritic
+          - unparam
+          - revive
+          - dupword
+          - exhaustive
+          - gocyclo
+          - gocognit
+          - funlen
+          - nestif
+          - cyclop
+      # Benchmarks similarly.
+      - path: bench_.*\.go
+        linters:
+          - gosec
+          - errcheck
+          - gocritic
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/nchapman/go-liquid
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -132,6 +133,13 @@ func (e *evaluator) evalNode(w io.Writer, node Node) error {
 	return err
 }
 
+// evalNodeInner dispatches to the per-tag evaluator for a single AST node.
+// The width is intrinsic to the Liquid spec — every tag type appears here as
+// a single case — and splitting it into per-tag dispatch tables would just
+// trade locality for indirection. The evaluator hot path benefits from
+// keeping the switch flat.
+//
+//nolint:gocyclo,cyclop,funlen // Tag-type dispatch; width matches the Liquid spec.
 func (e *evaluator) evalNodeInner(w io.Writer, node Node) error {
 	switch n := node.(type) {
 	case *TextNode:
@@ -503,58 +511,9 @@ func (e *evaluator) evalCaseTag(w io.Writer, tag *CaseTag) error {
 }
 
 func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
-	collection, err := e.evalExpr(tag.Collection)
+	items, err := e.collectForItems(tag)
 	if err != nil {
 		return err
-	}
-
-	// Handle range expression. The slice is materialized eagerly so that
-	// limit/offset/reversed below can apply uniformly; cap the range size
-	// to keep attacker-controlled endpoints from exhausting memory.
-	if rangeExpr, ok := tag.Collection.(*RangeExpr); ok {
-		startVal, err := e.evalExpr(rangeExpr.Start)
-		if err != nil {
-			return err
-		}
-		endVal, err := e.evalExpr(rangeExpr.End)
-		if err != nil {
-			return err
-		}
-		start := int(toInt(toNumber(startVal)))
-		end := int(toInt(toNumber(endVal)))
-
-		size := end - start
-		if size < 0 {
-			size = -size
-		}
-		if size+1 > maxRangeSize {
-			return fmt.Errorf("for range size %d exceeds limit %d", size+1, maxRangeSize)
-		}
-
-		items := make([]any, 0, size+1)
-		if start <= end {
-			for i := start; i <= end; i++ {
-				items = append(items, i)
-			}
-		} else {
-			for i := start; i >= end; i-- {
-				items = append(items, i)
-			}
-		}
-		collection = items
-	}
-
-	// Liquid treats a non-empty string as a single iteration item, not a
-	// sequence of characters (toSlice splits strings for filter use). An
-	// empty/blank string is non-iterable — zero iterations — to match
-	// upstream's `blank_string_not_iterable` behavior.
-	var items []any
-	if s, ok := collection.(string); ok {
-		if s != "" {
-			items = []any{s}
-		}
-	} else {
-		items = toSlice(collection)
 	}
 	if len(items) == 0 {
 		if tag.ElseBody != nil {
@@ -563,49 +522,34 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 		return nil
 	}
 
-	// `offset: continue` resumes from where the previous for-tag iterating
-	// the same {var,collection} stopped. The cursor lives in registers,
-	// keyed by forloopName so distinct loops over the same collection (or
-	// distinct collections under the same variable name) get independent
-	// cursors. Registers are per-Render, so the cursor resets between
-	// top-level renders.
-	contKey := tag.LoopName
-	off := 0
-	switch {
-	case tag.OffsetContinue:
-		off = e.regs.forContinue[contKey]
-	case tag.Offset != nil:
-		offset, err := e.evalExpr(tag.Offset)
-		if err != nil {
-			return err
-		}
-		off = int(toInt(toNumber(offset)))
+	off, err := e.resolveForOffset(tag)
+	if err != nil {
+		return err
 	}
-	if off > 0 && off < len(items) {
-		items = items[off:]
-	} else if off >= len(items) {
+	switch {
+	case off >= len(items):
 		items = nil
+	case off > 0:
+		items = items[off:]
 	}
 
-	// Apply limit
 	if tag.Limit != nil {
-		limit, err := e.evalExpr(tag.Limit)
+		lim, err := e.evalForInt(tag.Limit)
 		if err != nil {
 			return err
 		}
-		lim := int(toInt(toNumber(limit)))
 		if lim > 0 && lim < len(items) {
 			items = items[:lim]
 		}
 	}
 
-	// Apply reversed
 	if tag.Reversed {
-		reversed := make([]any, len(items))
-		for i, v := range items {
-			reversed[len(items)-1-i] = v
-		}
-		items = reversed
+		// Clone before reversing: items may share a backing array with the
+		// caller-supplied slice (toSlice returns []any by reference), and an
+		// in-place reverse would corrupt the caller's data — visible on a
+		// second render of the same template against the same context.
+		items = slices.Clone(items)
+		slices.Reverse(items)
 	}
 
 	if len(items) == 0 {
@@ -614,6 +558,8 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 		}
 		return nil
 	}
+
+	contKey := tag.LoopName
 
 	// Capture the enclosing forloop (if any) BEFORE pushing a new scope so
 	// the new forloop.parentloop reflects the outer iteration. Shopify's
@@ -664,6 +610,87 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 	return nil
 }
 
+// collectForItems evaluates tag.Collection and produces the iteration slice,
+// expanding range expressions and applying Liquid's "non-empty string is a
+// single item; empty string is non-iterable" rule.
+func (e *evaluator) collectForItems(tag *ForTag) ([]any, error) {
+	if rangeExpr, ok := tag.Collection.(*RangeExpr); ok {
+		return e.materializeRange(rangeExpr)
+	}
+	collection, err := e.evalExpr(tag.Collection)
+	if err != nil {
+		return nil, err
+	}
+	if s, ok := collection.(string); ok {
+		if s == "" {
+			return nil, nil
+		}
+		return []any{s}, nil
+	}
+	return toSlice(collection), nil
+}
+
+// materializeRange expands a RangeExpr into a concrete []any. The slice is
+// materialized eagerly so that limit/offset/reversed apply uniformly; the
+// range size is capped to keep attacker-controlled endpoints from
+// exhausting memory.
+func (e *evaluator) materializeRange(rangeExpr *RangeExpr) ([]any, error) {
+	start, err := e.evalForInt(rangeExpr.Start)
+	if err != nil {
+		return nil, err
+	}
+	end, err := e.evalForInt(rangeExpr.End)
+	if err != nil {
+		return nil, err
+	}
+	size := end - start
+	if size < 0 {
+		size = -size
+	}
+	if size+1 > maxRangeSize {
+		return nil, fmt.Errorf("for range size %d exceeds limit %d", size+1, maxRangeSize)
+	}
+	items := make([]any, 0, size+1)
+	if start <= end {
+		for i := start; i <= end; i++ {
+			items = append(items, i)
+		}
+	} else {
+		for i := start; i >= end; i-- {
+			items = append(items, i)
+		}
+	}
+	return items, nil
+}
+
+// resolveForOffset returns the iteration start offset, drawing from either
+// the saved continue cursor or the explicit `offset:` operand.
+//
+// `offset: continue` resumes from where the previous for-tag iterating the
+// same {var,collection} stopped. The cursor lives in per-Render registers
+// keyed by tag.LoopName so distinct loops over the same collection (or
+// distinct collections under the same variable name) get independent cursors.
+func (e *evaluator) resolveForOffset(tag *ForTag) (int, error) {
+	switch {
+	case tag.OffsetContinue:
+		return e.regs.forContinue[tag.LoopName], nil
+	case tag.Offset != nil:
+		return e.evalForInt(tag.Offset)
+	}
+	return 0, nil
+}
+
+// evalForInt evaluates expr and converts the result to a Go int via
+// toInt(toNumber(...)). Used for {% for %}'s integer operands (range
+// endpoints, offset, limit).
+func (e *evaluator) evalForInt(expr Expression) (int, error) {
+	v, err := e.evalExpr(expr)
+	if err != nil {
+		return 0, err
+	}
+	return int(toInt(toNumber(v))), nil
+}
+
 func (e *evaluator) evalExpr(expr Expression) (any, error) {
 	switch x := expr.(type) {
 	case *IdentExpr:
@@ -710,49 +737,7 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		return val, nil
 
 	case *FilterExpr:
-		input, err := e.evalExpr(x.Input)
-		if err != nil {
-			return nil, err
-		}
-
-		var args []any
-		if len(x.Args) > 0 {
-			args = make([]any, len(x.Args))
-			for i, arg := range x.Args {
-				val, err := e.evalExpr(arg)
-				if err != nil {
-					return nil, err
-				}
-				args[i] = val
-			}
-		}
-		var kwargs map[string]any
-		if len(x.Kwargs) > 0 {
-			kwargs = make(map[string]any, len(x.Kwargs))
-			for _, kv := range x.Kwargs {
-				val, err := e.evalExpr(kv.Value)
-				if err != nil {
-					return nil, err
-				}
-				kwargs[kv.Name] = val
-			}
-		}
-
-		// Single dispatch through the unified Filter interface. Positional
-		// filters that don't care about kwargs ignore them via FilterFunc.Apply,
-		// matching Shopify's "extra hash arg is a no-op" semantics.
-		if fn, ok := e.cfg.env.lookupFilter(x.Name); ok {
-			out, err := fn.Apply(input, args, kwargs)
-			if err != nil {
-				return nil, wrapAtNode(x, err, e.templateName)
-			}
-			return out, nil
-		}
-		if e.cfg.strictFilters {
-			return nil, wrapAtNode(x, fmt.Errorf("unknown filter %q", x.Name), e.templateName)
-		}
-		// Unknown filter — return input unchanged (lax Liquid semantics).
-		return input, nil
+		return e.evalFilterExpr(x)
 
 	case *BinaryExpr:
 		return e.evalBinaryExpr(x)
@@ -768,6 +753,79 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 	}
 }
 
+// evalFilterExpr evaluates `input | name: arg, kw: val` by dispatching through
+// the unified Filter interface. Positional filters that don't care about
+// kwargs ignore them via FilterFunc.Apply, matching Shopify's "extra hash arg
+// is a no-op" semantics. Unknown filters either error (strictFilters) or
+// pass input through (lax mode).
+func (e *evaluator) evalFilterExpr(x *FilterExpr) (any, error) {
+	input, err := e.evalExpr(x.Input)
+	if err != nil {
+		return nil, err
+	}
+	args, err := e.evalExprList(x.Args)
+	if err != nil {
+		return nil, err
+	}
+	kwargs, err := e.evalNamedExprs(x.Kwargs)
+	if err != nil {
+		return nil, err
+	}
+
+	if fn, ok := e.cfg.env.lookupFilter(x.Name); ok {
+		out, err := fn.Apply(input, args, kwargs)
+		if err != nil {
+			return nil, wrapAtNode(x, err, e.templateName)
+		}
+		return out, nil
+	}
+	if e.cfg.strictFilters {
+		return nil, wrapAtNode(x, fmt.Errorf("unknown filter %q", x.Name), e.templateName)
+	}
+	return input, nil
+}
+
+// evalExprList evaluates a positional argument list. Returns nil for an
+// empty input so callers can pass directly to filter Apply without an
+// allocated empty slice.
+func (e *evaluator) evalExprList(exprs []Expression) ([]any, error) {
+	if len(exprs) == 0 {
+		return nil, nil
+	}
+	out := make([]any, len(exprs))
+	for i, expr := range exprs {
+		v, err := e.evalExpr(expr)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+
+// evalNamedExprs evaluates a list of `name: value` pairs into a map. Returns
+// nil for an empty input.
+func (e *evaluator) evalNamedExprs(kvs []NamedArg) (map[string]any, error) {
+	if len(kvs) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]any, len(kvs))
+	for _, kv := range kvs {
+		v, err := e.evalExpr(kv.Value)
+		if err != nil {
+			return nil, err
+		}
+		out[kv.Name] = v
+	}
+	return out, nil
+}
+
+// evalBinaryExpr dispatches over the binary-operator set. The width is
+// inherent — one case per operator the Liquid grammar accepts — and lifting
+// each into its own helper would obscure the short-circuit/coercion rules
+// that read naturally as a single switch.
+//
+//nolint:cyclop // Operator dispatch; width matches the Liquid grammar.
 func (e *evaluator) evalBinaryExpr(expr *BinaryExpr) (any, error) {
 	// Logical operators short-circuit AND preserve operand values:
 	//
@@ -989,85 +1047,91 @@ func getPropertyOK(obj any, prop string, ctx RenderContext) (any, bool) {
 	return nil, false
 }
 
-// getIndex returns an element by index, or nil if absent / out of range.
-func getIndex(obj any, idx any) any {
-	v, _ := getIndexOK(obj, idx, nil)
-	return v
-}
-
-// getIndexOK is the strict-aware variant. Reports false when the
+// getIndexOK returns an element by index. Reports false when the
 // requested index is out of range or the object isn't indexable.
-func getIndexOK(obj any, idx any, ctx RenderContext) (any, bool) {
+func getIndexOK(obj, idx any, ctx RenderContext) (any, bool) {
 	if obj == nil {
 		return nil, false
 	}
-
 	if s, ok := idx.(string); ok {
 		return getPropertyOK(obj, s, ctx)
 	}
-
-	// Reject fractional floats outright. Ruby's Utils.to_liquid_value
-	// keeps floats as floats, so {{ h[1.9] }} cannot match the string
-	// key "1" in a hash; truncating silently would invent a match that
-	// upstream does not produce.
-	switch f := idx.(type) {
-	case float32:
-		if float32(int32(f)) != f {
-			return nil, false
-		}
-	case float64:
-		if float64(int64(f)) != f {
-			return nil, false
-		}
+	if isFractionalFloat(idx) {
+		// Reject fractional floats outright. Ruby's Utils.to_liquid_value
+		// keeps floats as floats, so {{ h[1.9] }} cannot match the string
+		// key "1" in a hash; truncating silently would invent a match
+		// that upstream does not produce.
+		return nil, false
 	}
 
 	i := int(toInt(toNumber(idx)))
 
 	switch v := obj.(type) {
 	case []any:
-		if i >= 0 && i < len(v) {
-			return v[i], true
-		}
-		if i < 0 && -i <= len(v) {
-			return v[len(v)+i], true
-		}
-		return nil, false
+		return sliceAt(v, i)
 	case string:
-		if i >= 0 && i < len(v) {
-			return string(v[i]), true
-		}
-		if i < 0 && -i <= len(v) {
-			return string(v[len(v)+i]), true
+		if j, ok := normalizeIndex(i, len(v)); ok {
+			return string(v[j]), true
 		}
 		return nil, false
 	case map[string]any:
-		// Ruby coerces the key for hash lookup so `obj[1]` finds entry "1".
-		// Real-world hit: JSON data with stringified-integer keys.
-		// Negative integers can't possibly match a stringified-int key,
-		// so skip the strconv.Itoa allocation on the guaranteed-miss path.
-		if i < 0 {
-			return nil, false
-		}
-		return getPropertyOK(obj, strconv.Itoa(i), ctx)
-	default:
-		rv := reflect.ValueOf(obj)
-		if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
-			if i >= 0 && i < rv.Len() {
-				return rv.Index(i).Interface(), true
-			}
-			if i < 0 && -i <= rv.Len() {
-				return rv.Index(rv.Len() + i).Interface(), true
-			}
-		}
-		if rv.Kind() == reflect.Map {
-			if i < 0 {
-				return nil, false
-			}
-			return getPropertyOK(obj, strconv.Itoa(i), ctx)
-		}
+		return mapIntKey(obj, i, ctx)
 	}
 
+	rv := reflect.ValueOf(obj)
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array:
+		if j, ok := normalizeIndex(i, rv.Len()); ok {
+			return rv.Index(j).Interface(), true
+		}
+		return nil, false
+	case reflect.Map:
+		return mapIntKey(obj, i, ctx)
+	default:
+		return nil, false
+	}
+}
+
+// isFractionalFloat reports whether v is a non-integer float.
+func isFractionalFloat(v any) bool {
+	switch f := v.(type) {
+	case float32:
+		return float32(int32(f)) != f
+	case float64:
+		return float64(int64(f)) != f
+	}
+	return false
+}
+
+// normalizeIndex resolves a possibly-negative index into a positive one,
+// reporting false when out of range. Negative indices count from the end:
+// -1 is the last element.
+func normalizeIndex(i, length int) (int, bool) {
+	switch {
+	case i >= 0 && i < length:
+		return i, true
+	case i < 0 && -i <= length:
+		return length + i, true
+	}
+	return 0, false
+}
+
+// sliceAt indexes an []any with optional negative-index support.
+func sliceAt(v []any, i int) (any, bool) {
+	if j, ok := normalizeIndex(i, len(v)); ok {
+		return v[j], true
+	}
 	return nil, false
+}
+
+// mapIntKey looks up an integer key in a map, coercing it to its string form
+// (Ruby coerces hash keys for lookup, so `obj[1]` finds entry "1"). Negative
+// keys cannot match a stringified-int key, so the allocation is skipped.
+func mapIntKey(obj any, i int, ctx RenderContext) (any, bool) {
+	if i < 0 {
+		return nil, false
+	}
+	return getPropertyOK(obj, strconv.Itoa(i), ctx)
 }
 
 // equal checks if two values are equal.
@@ -1181,8 +1245,9 @@ func isNumeric(v any) bool {
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 		reflect.Float32, reflect.Float64:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 func (e *evaluator) evalCycleTag(w io.Writer, tag *CycleTag) error {
@@ -1249,40 +1314,13 @@ func (e *evaluator) evalTablerowTag(w io.Writer, tag *TablerowTag) error {
 	if collection == nil {
 		return nil
 	}
-	items := toSlice(collection)
-
-	if tag.Offset != nil {
-		off, err := e.evalExpr(tag.Offset)
-		if err != nil {
-			return err
-		}
-		n := int(toInt(toNumber(off)))
-		if n > 0 && n < len(items) {
-			items = items[n:]
-		} else if n >= len(items) {
-			items = nil
-		}
+	items, err := e.applyTablerowSlice(toSlice(collection), tag)
+	if err != nil {
+		return err
 	}
-	if tag.Limit != nil {
-		lim, err := e.evalExpr(tag.Limit)
-		if err != nil {
-			return err
-		}
-		n := int(toInt(toNumber(lim)))
-		if n >= 0 && n < len(items) {
-			items = items[:n]
-		}
-	}
-
-	cols := len(items)
-	if tag.Cols != nil {
-		v, err := e.evalExpr(tag.Cols)
-		if err != nil {
-			return err
-		}
-		if n := int(toInt(toNumber(v))); n > 0 {
-			cols = n
-		}
+	cols, err := e.tablerowCols(tag, len(items))
+	if err != nil {
+		return err
 	}
 	if cols == 0 {
 		// Match Shopify: empty collection still emits a single empty row.
@@ -1296,25 +1334,74 @@ func (e *evaluator) evalTablerowTag(w io.Writer, tag *TablerowTag) error {
 	if _, err := io.WriteString(w, "<tr class=\"row1\">\n"); err != nil {
 		return err
 	}
+	if err := e.renderTablerowCells(w, items, cols, tag); err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, "</tr>\n")
+	return err
+}
+
+// applyTablerowSlice applies tablerow's offset/limit operands. Tablerow has
+// no `reversed`.
+func (e *evaluator) applyTablerowSlice(items []any, tag *TablerowTag) ([]any, error) {
+	if tag.Offset != nil {
+		n, err := e.evalForInt(tag.Offset)
+		if err != nil {
+			return nil, err
+		}
+		switch {
+		case n >= len(items):
+			items = nil
+		case n > 0:
+			items = items[n:]
+		}
+	}
+	if tag.Limit != nil {
+		n, err := e.evalForInt(tag.Limit)
+		if err != nil {
+			return nil, err
+		}
+		if n >= 0 && n < len(items) {
+			items = items[:n]
+		}
+	}
+	return items, nil
+}
+
+// tablerowCols returns the configured column count, falling back to len(items)
+// when the operand is missing or non-positive (matching Shopify).
+func (e *evaluator) tablerowCols(tag *TablerowTag, defaultCols int) (int, error) {
+	if tag.Cols == nil {
+		return defaultCols, nil
+	}
+	n, err := e.evalForInt(tag.Cols)
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		return n, nil
+	}
+	return defaultCols, nil
+}
+
+// renderTablerowCells iterates items, emitting <td> per cell and <tr> row
+// boundaries. The body is rendered to a scratch buffer per cell so that
+// break/continue still produces a properly-closed <td> wrapper.
+func (e *evaluator) renderTablerowCells(w io.Writer, items []any, cols int, tag *TablerowTag) error {
 	length := len(items)
-	// Per-cell scratch buffer: tablerow wraps each cell in <td>...</td>,
-	// and break/continue inside the body must still emit the partial cell
-	// with its closing tag — easier to evaluate body to scratch and then
-	// emit the wrapped cell than to insert the closing tag from the
-	// outside if break/continue fired mid-stream.
-	var cell strings.Builder
 	tl := &tablerowloopState{length: length, cols: cols}
+	var cell strings.Builder
+
 	for i, item := range items {
 		col := i%cols + 1
 		row := i/cols + 1
-		colFirst := col == 1
 		colLast := col == cols || i == length-1
 		isLast := i == length-1
 
 		tl.index0 = i
 		tl.col = col
 		tl.row = row
-		tl.colFirst = colFirst
+		tl.colFirst = col == 1
 		tl.colLast = colLast
 		e.ctx.set(tag.Variable, item)
 		e.ctx.set("tablerowloop", tl)
@@ -1329,23 +1416,16 @@ func (e *evaluator) evalTablerowTag(w io.Writer, tag *TablerowTag) error {
 			return err
 		}
 		if errors.Is(bodyErr, errBreak) {
-			break
+			return nil
 		}
-		if errors.Is(bodyErr, errContinue) {
-			if colLast && !isLast {
-				fmt.Fprintf(w, "</tr>\n<tr class=\"row%d\">", row+1)
-			}
-			continue
-		}
-		if bodyErr != nil {
+		if !errors.Is(bodyErr, errContinue) && bodyErr != nil {
 			return bodyErr
 		}
 		if colLast && !isLast {
 			fmt.Fprintf(w, "</tr>\n<tr class=\"row%d\">", row+1)
 		}
 	}
-	_, err = io.WriteString(w, "</tr>\n")
-	return err
+	return nil
 }
 
 // evalIfchangedTag emits the body only when its rendering differs from

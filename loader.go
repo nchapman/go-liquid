@@ -118,7 +118,8 @@ func (c *partialCache) get(name string) (*Template, error) {
 		// errors.As can extract it; falls back to a wrap for non-ParseError
 		// failures (which Parse doesn't currently produce, but keep the
 		// belt-and-suspenders).
-		if pe, ok := err.(*ParseError); ok {
+		pe := &ParseError{}
+		if errors.As(err, &pe) {
 			pe.TemplateName = name
 			return nil, pe
 		}

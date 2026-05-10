@@ -1,6 +1,9 @@
 package liquid
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // ParseError is returned when a template fails to parse. It carries the
 // source position so callers can pinpoint the offending tag, and an
@@ -59,7 +62,8 @@ func wrapAtNode(n Node, err error, templateName string) error {
 	if err == nil {
 		return nil
 	}
-	if _, ok := err.(*RenderError); ok {
+	renderError := &RenderError{}
+	if errors.As(err, &renderError) {
 		return err
 	}
 	line, col := n.Pos()

@@ -16,10 +16,6 @@ type parser struct {
 	warnings           []Warning
 }
 
-func newParser(input string) *parser {
-	return newParserWithEnv(input, Default())
-}
-
 func newParserWithEnv(input string, env *Environment) *parser {
 	if env == nil {
 		env = Default()
@@ -49,41 +45,47 @@ func (p *parser) parseNodes(endCondition func() bool) ([]Node, error) {
 		if err != nil {
 			return nil, err
 		}
-		if node != nil {
-			// Handle left trim: trim trailing whitespace from previous text node
-			if trimLeft && len(nodes) > 0 {
-				if textNode, ok := nodes[len(nodes)-1].(*TextNode); ok {
-					textNode.Text = trimTrailingWhitespace(textNode.Text)
-				}
-			}
-
-			// Handle pending right trim from previous tag
-			if p.trimNextText {
-				if textNode, ok := node.(*TextNode); ok {
-					textNode.Text = trimLeadingWhitespace(textNode.Text)
-				}
-				p.trimNextText = false
-			}
-
-			nodes = append(nodes, node)
-
-			// Set flag for next text node if this node has right trim
-			if trimRight {
-				p.trimNextText = true
-			}
+		if node == nil {
+			continue
+		}
+		if trimLeft {
+			trimPrevTextRight(nodes)
+		}
+		if p.trimNextText {
+			trimTextNodeLeft(node)
+			p.trimNextText = false
+		}
+		nodes = append(nodes, node)
+		if trimRight {
+			p.trimNextText = true
 		}
 	}
 
-	// Handle left trim from the terminating tag (e.g., {%- endfor, {%- endif)
-	// When we exit the loop due to endCondition, the current token is {%- or {%
-	// If it's {%-, we need to trim trailing whitespace from the last text node
-	if p.curToken.typ == tokenTagTrim && len(nodes) > 0 {
-		if textNode, ok := nodes[len(nodes)-1].(*TextNode); ok {
-			textNode.Text = trimTrailingWhitespace(textNode.Text)
-		}
+	// A `{%-` terminator (e.g. `{%- endfor`) needs to trim trailing whitespace
+	// from the last text node we emitted before it.
+	if p.curToken.typ == tokenTagTrim {
+		trimPrevTextRight(nodes)
 	}
-
 	return nodes, nil
+}
+
+// trimPrevTextRight strips trailing whitespace from the last node when it is
+// a TextNode. No-op otherwise.
+func trimPrevTextRight(nodes []Node) {
+	if len(nodes) == 0 {
+		return
+	}
+	if t, ok := nodes[len(nodes)-1].(*TextNode); ok {
+		t.Text = trimTrailingWhitespace(t.Text)
+	}
+}
+
+// trimTextNodeLeft strips leading whitespace from node when it is a TextNode.
+// No-op otherwise.
+func trimTextNodeLeft(node Node) {
+	if t, ok := node.(*TextNode); ok {
+		t.Text = trimLeadingWhitespace(t.Text)
+	}
 }
 
 // trimTrailingWhitespace removes trailing whitespace including newlines
@@ -182,6 +184,8 @@ func (p *parser) parseTagWithTrim() (Node, bool, error) {
 // parseTag dispatches a tag by name. Tag names are not globally reserved
 // tokens; the lexer emits them as plain identifiers. They are recognized
 // only here, immediately after `{%`.
+//
+//nolint:gocyclo,cyclop // Tag-name dispatch; width matches the Liquid spec.
 func (p *parser) parseTag() (Node, error) {
 	p.nextToken() // consume {% or {%-
 
@@ -398,61 +402,8 @@ func (p *parser) parseTablerowTag() (Node, error) {
 		Column:     column,
 	}
 
-	// Attribute loop: same shape as for-tag's limit/offset/reversed but
-	// also accepts cols. Tablerow has no `reversed`.
-TablerowAttrs:
-	for {
-		switch {
-		case p.isWord("cols"):
-			p.nextToken()
-			if p.curToken.typ != tokenColon {
-				return nil, newParseError(p.curToken.line, p.curToken.column, "expected ':' after cols")
-			}
-			p.nextToken()
-			expr, err := p.parsePrimary()
-			if err != nil {
-				return nil, err
-			}
-			tag.Cols = expr
-		case p.isWord("limit"):
-			p.nextToken()
-			if p.curToken.typ != tokenColon {
-				return nil, newParseError(p.curToken.line, p.curToken.column, "expected ':' after limit")
-			}
-			p.nextToken()
-			expr, err := p.parsePrimary()
-			if err != nil {
-				return nil, err
-			}
-			tag.Limit = expr
-		case p.isWord("offset"):
-			p.nextToken()
-			if p.curToken.typ != tokenColon {
-				return nil, newParseError(p.curToken.line, p.curToken.column, "expected ':' after offset")
-			}
-			p.nextToken()
-			expr, err := p.parsePrimary()
-			if err != nil {
-				return nil, err
-			}
-			tag.Offset = expr
-		case p.isWord("range"):
-			// Shopify accepts `range:` as a tablerow attribute but never
-			// uses it (its renderer ignores it). Accept-and-discard for
-			// parity so templates that supply it parse without error.
-			p.nextToken()
-			if p.curToken.typ != tokenColon {
-				return nil, newParseError(p.curToken.line, p.curToken.column, "expected ':' after range")
-			}
-			p.nextToken()
-			if _, err := p.parsePrimary(); err != nil {
-				return nil, err
-			}
-		case p.curToken.typ == tokenComma:
-			p.nextToken()
-		default:
-			break TablerowAttrs
-		}
+	if err := p.parseTablerowAttrs(tag); err != nil {
+		return nil, err
 	}
 
 	if err := p.expectTagClose(); err != nil {
@@ -474,6 +425,45 @@ TablerowAttrs:
 		return nil, err
 	}
 	return tag, nil
+}
+
+// parseTablerowAttrs consumes the optional `cols:`, `limit:`, `offset:`,
+// `range:` modifiers (and tolerated commas) that may follow `tablerow var
+// in coll`. The shape mirrors `for`'s parameter loop, minus `reversed`.
+// `range:` is accept-and-discard for Shopify parity.
+func (p *parser) parseTablerowAttrs(tag *TablerowTag) error {
+	for {
+		switch {
+		case p.isWord("cols"):
+			expr, err := p.parseForKeywordArg("cols")
+			if err != nil {
+				return err
+			}
+			tag.Cols = expr
+		case p.isWord("limit"):
+			expr, err := p.parseForKeywordArg("limit")
+			if err != nil {
+				return err
+			}
+			tag.Limit = expr
+		case p.isWord("offset"):
+			expr, err := p.parseForKeywordArg("offset")
+			if err != nil {
+				return err
+			}
+			tag.Offset = expr
+		case p.isWord("range"):
+			// Shopify accepts `range:` as a tablerow attribute but its
+			// renderer ignores it. Parse-and-discard for parity.
+			if _, err := p.parseForKeywordArg("range"); err != nil {
+				return err
+			}
+		case p.curToken.typ == tokenComma:
+			p.nextToken()
+		default:
+			return nil
+		}
+	}
 }
 
 // parseIfchangedTag handles {% ifchanged %}body{% endifchanged %}. The
@@ -906,44 +896,9 @@ func (p *parser) parseForTag() (Node, error) {
 	}
 	p.nextToken()
 
-	// Check for range (start..end)
-	var collection Expression
-	if p.curToken.typ == tokenLParen {
-		p.nextToken() // consume (
-		start, err := p.parsePrimary()
-		if err != nil {
-			return nil, err
-		}
-
-		if p.curToken.typ != tokenRange {
-			return nil, newParseError(p.curToken.line, p.curToken.column,
-				"expected '..' in range, got %q", p.curToken.literal)
-		}
-		p.nextToken() // consume ..
-
-		end, err := p.parsePrimary()
-		if err != nil {
-			return nil, err
-		}
-
-		if p.curToken.typ != tokenRParen {
-			return nil, newParseError(p.curToken.line, p.curToken.column,
-				"expected ')', got %q", p.curToken.literal)
-		}
-		p.nextToken() // consume )
-
-		collection = &RangeExpr{
-			Start:  start,
-			End:    end,
-			Line:   line,
-			Column: column,
-		}
-	} else {
-		var err error
-		collection, err = p.parsePrimary()
-		if err != nil {
-			return nil, err
-		}
+	collection, err := p.parseForCollection(line, column)
+	if err != nil {
+		return nil, err
 	}
 
 	tag := &ForTag{
@@ -954,55 +909,14 @@ func (p *parser) parseForTag() (Node, error) {
 		LoopName:   computeForloopName(varName, collection),
 	}
 
-	// Optional parameters: limit, offset, reversed. These are recognized
-	// contextually (by literal) so they remain valid variable names elsewhere.
-ParamLoop:
-	for {
-		switch {
-		case p.isWord("limit"):
-			p.nextToken()
-			if p.curToken.typ != tokenColon {
-				return nil, newParseError(p.curToken.line, p.curToken.column,
-					"expected ':' after limit")
-			}
-			p.nextToken()
-			limit, err := p.parsePrimary()
-			if err != nil {
-				return nil, err
-			}
-			tag.Limit = limit
-		case p.isWord("offset"):
-			p.nextToken()
-			if p.curToken.typ != tokenColon {
-				return nil, newParseError(p.curToken.line, p.curToken.column,
-					"expected ':' after offset")
-			}
-			p.nextToken()
-			// Shopify accepts `offset: continue` to resume from where the
-			// previous render of this same for-tag stopped (pagination).
-			if p.isWord("continue") {
-				tag.OffsetContinue = true
-				p.nextToken()
-			} else {
-				offset, err := p.parsePrimary()
-				if err != nil {
-					return nil, err
-				}
-				tag.Offset = offset
-			}
-		case p.isWord("reversed"):
-			p.nextToken()
-			tag.Reversed = true
-		default:
-			break ParamLoop
-		}
+	if err := p.parseForParams(tag); err != nil {
+		return nil, err
 	}
 
 	if err := p.expectTagClose(); err != nil {
 		return nil, err
 	}
 
-	var err error
 	tag.Body, err = p.parseNodes(func() bool {
 		return p.isTagKeyword("else") || p.isTagKeyword("endfor")
 	})
@@ -1052,6 +966,86 @@ func (p *parser) parseBreakTag() (Node, error) {
 	}
 
 	return &BreakTag{Line: line, Column: column}, nil
+}
+
+// parseForCollection parses the iteration source of a `for` tag: either a
+// `(start..end)` range or an arbitrary primary expression.
+func (p *parser) parseForCollection(line, column int) (Expression, error) {
+	if p.curToken.typ != tokenLParen {
+		return p.parsePrimary()
+	}
+	p.nextToken() // consume (
+	start, err := p.parsePrimary()
+	if err != nil {
+		return nil, err
+	}
+	if p.curToken.typ != tokenRange {
+		return nil, newParseError(p.curToken.line, p.curToken.column,
+			"expected '..' in range, got %q", p.curToken.literal)
+	}
+	p.nextToken() // consume ..
+	end, err := p.parsePrimary()
+	if err != nil {
+		return nil, err
+	}
+	if p.curToken.typ != tokenRParen {
+		return nil, newParseError(p.curToken.line, p.curToken.column,
+			"expected ')', got %q", p.curToken.literal)
+	}
+	p.nextToken() // consume )
+	return &RangeExpr{Start: start, End: end, Line: line, Column: column}, nil
+}
+
+// parseForParams consumes the optional `limit:`, `offset:`, and `reversed`
+// modifiers that may follow `for var in coll`. These are recognized
+// contextually (by literal) so they remain valid variable names elsewhere.
+func (p *parser) parseForParams(tag *ForTag) error {
+	for {
+		switch {
+		case p.isWord("limit"):
+			limit, err := p.parseForKeywordArg("limit")
+			if err != nil {
+				return err
+			}
+			tag.Limit = limit
+		case p.isWord("offset"):
+			p.nextToken()
+			if p.curToken.typ != tokenColon {
+				return newParseError(p.curToken.line, p.curToken.column,
+					"expected ':' after offset")
+			}
+			p.nextToken()
+			// Shopify accepts `offset: continue` to resume from where the
+			// previous render of this same for-tag stopped (pagination).
+			if p.isWord("continue") {
+				tag.OffsetContinue = true
+				p.nextToken()
+				continue
+			}
+			offset, err := p.parsePrimary()
+			if err != nil {
+				return err
+			}
+			tag.Offset = offset
+		case p.isWord("reversed"):
+			p.nextToken()
+			tag.Reversed = true
+		default:
+			return nil
+		}
+	}
+}
+
+// parseForKeywordArg consumes `name: <primary>` and returns the parsed
+// expression. The current token must be the keyword.
+func (p *parser) parseForKeywordArg(name string) (Expression, error) {
+	p.nextToken() // consume keyword
+	if p.curToken.typ != tokenColon {
+		return nil, newParseError(p.curToken.line, p.curToken.column,
+			"expected ':' after %s", name)
+	}
+	p.nextToken()
+	return p.parsePrimary()
 }
 
 func (p *parser) parseContinueTag() (Node, error) {
@@ -1305,9 +1299,9 @@ func (p *parser) parsePartialTag(isolated bool) (Node, error) {
 	p.nextToken()
 
 	var (
-		withExpr, forExpr     Expression
-		withAlias, forAlias   string
-		args                  []NamedArg
+		withExpr, forExpr   Expression
+		withAlias, forAlias string
+		args                []NamedArg
 	)
 
 	// Optional `with EXPR [as ALIAS]` or `for EXPR [as ALIAS]`. These
@@ -1399,72 +1393,87 @@ func (p *parser) parsePartialTag(isolated bool) (Node, error) {
 	}, nil
 }
 
-// parseExpression parses an expression with filters.
+// parseExpression parses an expression with optional `| filter` chain.
 func (p *parser) parseExpression() (Expression, error) {
 	expr, err := p.parseOr()
 	if err != nil {
 		return nil, err
 	}
-
-	// Parse filter chain
 	for p.curToken.typ == tokenPipe {
-		line := p.curToken.line
-		column := p.curToken.column
-		p.nextToken() // consume |
-
-		if p.curToken.typ != tokenIdent {
-			return nil, newParseError(p.curToken.line, p.curToken.column,
-				"expected filter name, got %q", p.curToken.literal)
-		}
-		filterName := p.curToken.literal
-		p.nextToken()
-
-		var args []Expression
-		var kwargs []NamedArg
-		if p.curToken.typ == tokenColon {
-			p.nextToken() // consume :
-			for {
-				// Peek for `IDENT :` — that's a named argument. Once we see
-				// the first kwarg, the rest of the args list must be kwargs
-				// (matching Shopify and avoiding interleave ambiguity).
-				if p.curToken.typ == tokenIdent && p.peekTokenIs(tokenColon) {
-					key := p.curToken.literal
-					p.nextToken() // consume key
-					p.nextToken() // consume :
-					val, err := p.parseOr()
-					if err != nil {
-						return nil, err
-					}
-					kwargs = append(kwargs, NamedArg{Name: key, Value: val})
-				} else {
-					if len(kwargs) > 0 {
-						return nil, newParseError(p.curToken.line, p.curToken.column,
-							"positional filter arg cannot follow named arg")
-					}
-					arg, err := p.parseOr()
-					if err != nil {
-						return nil, err
-					}
-					args = append(args, arg)
-				}
-				if p.curToken.typ != tokenComma {
-					break
-				}
-				p.nextToken() // consume comma
-			}
-		}
-
-		expr = &FilterExpr{
-			Input:  expr,
-			Name:   filterName,
-			Args:   args,
-			Kwargs: kwargs,
-			Line:   line,
-			Column: column,
+		expr, err = p.parseFilter(expr)
+		if err != nil {
+			return nil, err
 		}
 	}
-
 	return expr, nil
+}
+
+// parseFilter consumes one `| name[: arg, key: val, ...]` segment and wraps
+// the input expression in a FilterExpr. The current token must be the pipe.
+func (p *parser) parseFilter(input Expression) (Expression, error) {
+	line := p.curToken.line
+	column := p.curToken.column
+	p.nextToken() // consume |
+
+	if p.curToken.typ != tokenIdent {
+		return nil, newParseError(p.curToken.line, p.curToken.column,
+			"expected filter name, got %q", p.curToken.literal)
+	}
+	filterName := p.curToken.literal
+	p.nextToken()
+
+	args, kwargs, err := p.parseFilterArgs()
+	if err != nil {
+		return nil, err
+	}
+	return &FilterExpr{
+		Input:  input,
+		Name:   filterName,
+		Args:   args,
+		Kwargs: kwargs,
+		Line:   line,
+		Column: column,
+	}, nil
+}
+
+// parseFilterArgs parses the optional `: arg1, arg2, k: v, ...` argument
+// list following a filter name. Once a kwarg appears, all subsequent args
+// must be kwargs (matching Shopify, avoiding interleave ambiguity).
+func (p *parser) parseFilterArgs() ([]Expression, []NamedArg, error) {
+	if p.curToken.typ != tokenColon {
+		return nil, nil, nil
+	}
+	p.nextToken() // consume :
+
+	var args []Expression
+	var kwargs []NamedArg
+	for {
+		isKwarg := p.curToken.typ == tokenIdent && p.peekTokenIs(tokenColon)
+		if isKwarg {
+			key := p.curToken.literal
+			p.nextToken() // consume key
+			p.nextToken() // consume :
+			val, err := p.parseOr()
+			if err != nil {
+				return nil, nil, err
+			}
+			kwargs = append(kwargs, NamedArg{Name: key, Value: val})
+		} else {
+			if len(kwargs) > 0 {
+				return nil, nil, newParseError(p.curToken.line, p.curToken.column,
+					"positional filter arg cannot follow named arg")
+			}
+			arg, err := p.parseOr()
+			if err != nil {
+				return nil, nil, err
+			}
+			args = append(args, arg)
+		}
+		if p.curToken.typ != tokenComma {
+			return args, kwargs, nil
+		}
+		p.nextToken() // consume comma
+	}
 }
 
 // parseOr is the entry point for `and`/`or` chains. Liquid does not give
@@ -1710,11 +1719,11 @@ func (p *parser) isWord(word string) bool {
 // without consuming input. Used by peekTokenIs and isTagKeyword for the
 // one-token lookahead they each need.
 type parserSnapshot struct {
-	tok                                token
-	pos, readPos                       int
-	ch                                 byte
-	line, column                       int
-	mode                               lexerMode
+	tok          token
+	pos, readPos int
+	ch           byte
+	line, column int
+	mode         lexerMode
 }
 
 func (p *parser) snapshot() parserSnapshot {
@@ -1801,8 +1810,10 @@ func parseFloat(s string) float64 {
 }
 
 // Special values for empty and blank comparisons.
-type emptyValue struct{}
-type blankValue struct{}
+type (
+	emptyValue struct{}
+	blankValue struct{}
+)
 
 func (e emptyValue) String() string { return "empty" }
 func (b blankValue) String() string { return "blank" }

@@ -15,7 +15,7 @@ func filterEscapeOnce(input any, _ ...any) any {
 	s := toString(input)
 	var b strings.Builder
 	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := s[i]
 		switch c {
 		case '<':

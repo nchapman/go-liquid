@@ -89,7 +89,6 @@ func TestUpstream_Variable(t *testing.T) {
 		{"ignore_unknown", "{{ test }}", nil, ""},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			renderEq(t, c.name, c.src, c.data, c.want)
 		})
@@ -212,7 +211,6 @@ func TestUpstream_InlineComment(t *testing.T) {
 		{"multiple_pound_signs", "{% ##### why so many pounds ##### %}", ""},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			renderEq(t, c.name, c.src, nil, c.want)
 		})
@@ -347,7 +345,6 @@ func TestUpstream_Statements(t *testing.T) {
 		{"null_neq_value", " {% if var != null %} true {% else %} false {% endif %} ", map[string]any{"var": 1}, "  true  "},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			renderEq(t, c.name, c.src, c.data, c.want)
 		})
@@ -448,7 +445,6 @@ func TestUpstream_UnlessElse(t *testing.T) {
 		{"unless_else_in_loop", "{% for i in choices %}{% unless i %} {{ forloop.index }} {% else %} TRUE {% endunless %}{% endfor %}", map[string]any{"choices": []any{1, nil, false}}, " TRUE  2  3 "},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			renderEq(t, c.name, c.src, c.data, c.want)
 		})
@@ -510,7 +506,6 @@ func TestUpstream_OutputFilterPipelines(t *testing.T) {
 		{"multiple_pipings", " {{ best_cars | cite_funny | paragraph }} ", " <p>LOL: bmw</p> "},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			renderEq(t, c.name, c.src, data, c.want)
 		})

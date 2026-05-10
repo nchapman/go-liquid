@@ -72,24 +72,36 @@ func TestShopifyCompat(t *testing.T) {
 		// Ruby's array filters wrap input through InputIterator, which
 		// flattens nested arrays before iterating. Locks in parity with
 		// `[[1,2],[3]] | join: ","` => "1,2,3" in Ruby.
-		{"join flattens nested arrays", `{{ a | join: "," }}`, "1,2,3,4,5",
-			map[string]any{"a": []any{[]any{1, 2}, []any{3, []any{4, 5}}}}},
-		{"sort flattens nested arrays", `{{ a | sort | join: "," }}`, "1,2,3",
-			map[string]any{"a": []any{[]any{3}, []any{1, 2}}}},
-		{"map flattens nested arrays", `{{ a | map: "x" | join: "," }}`, "1,2",
-			map[string]any{"a": []any{[]any{map[string]any{"x": 1}}, map[string]any{"x": 2}}}},
+		{
+			"join flattens nested arrays", `{{ a | join: "," }}`, "1,2,3,4,5",
+			map[string]any{"a": []any{[]any{1, 2}, []any{3, []any{4, 5}}}},
+		},
+		{
+			"sort flattens nested arrays", `{{ a | sort | join: "," }}`, "1,2,3",
+			map[string]any{"a": []any{[]any{3}, []any{1, 2}}},
+		},
+		{
+			"map flattens nested arrays", `{{ a | map: "x" | join: "," }}`, "1,2",
+			map[string]any{"a": []any{[]any{map[string]any{"x": 1}}, map[string]any{"x": 2}}},
+		},
 
 		// Ruby's sort/sort_natural return [] (not nil) for empty input, so
 		// downstream `| size` reports 0 and the value renders as empty.
-		{"sort empty returns []", `[{{ a | sort | size }}]`, "[0]",
-			map[string]any{"a": []any{}}},
-		{"sort_natural empty returns []", `[{{ a | sort_natural | size }}]`, "[0]",
-			map[string]any{"a": []any{}}},
+		{
+			"sort empty returns []", `[{{ a | sort | size }}]`, "[0]",
+			map[string]any{"a": []any{}},
+		},
+		{
+			"sort_natural empty returns []", `[{{ a | sort_natural | size }}]`, "[0]",
+			map[string]any{"a": []any{}},
+		},
 
 		// Ruby's InputIterator wraps a single string as [string] (Array(s)),
 		// it does NOT split into characters. So `"FB" | join: ","` is "FB".
-		{"join does not split string into chars", `{{ s | join: "," }}`, "FB",
-			map[string]any{"s": "FB"}},
+		{
+			"join does not split string into chars", `{{ s | join: "," }}`, "FB",
+			map[string]any{"s": "FB"},
+		},
 
 		// Ruby coerces hash keys for integer subscript lookup, so
 		// `obj[1]` finds the entry stored under the string key "1".

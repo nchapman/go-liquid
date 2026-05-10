@@ -1,3 +1,4 @@
+// Package main demonstrates basic use of the go-liquid template engine.
 package main
 
 import (

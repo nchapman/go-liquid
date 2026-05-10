@@ -666,7 +666,7 @@ func BenchmarkShopifyTokenize(b *testing.B) {
 		sources = append(sources, t.source, t.layout)
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		for _, src := range sources {
 			l := newLexer(src)
 			for {
@@ -687,7 +687,7 @@ func BenchmarkShopifyParse(b *testing.B) {
 		sources = append(sources, t.source, t.layout)
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		for _, src := range sources {
 			if _, err := Parse(src); err != nil {
 				b.Fatal(err)
@@ -700,7 +700,7 @@ func BenchmarkShopifyRender(b *testing.B) {
 	loadShopifyData(b)
 	tmpls := loadShopifyTemplates(b)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		for _, t := range tmpls {
 			renderShopifyOnce(b, t, io.Discard)
 		}
@@ -711,7 +711,7 @@ func BenchmarkShopifyParseAndRender(b *testing.B) {
 	loadShopifyData(b)
 	tmpls := loadShopifyTemplates(b)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		for _, t := range tmpls {
 			page, err := Parse(t.source)
 			if err != nil {

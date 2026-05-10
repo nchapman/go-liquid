@@ -95,10 +95,6 @@ func (e *Environment) RegisterBlock(name string, parse TagParser) {
 	e.mu.Unlock()
 }
 
-// WithLoader sets the default Loader used by templates parsed through this
-// environment, so they can resolve {% render %} / {% include %} partials
-// without an explicit per-template Template.WithLoader. Returns the
-// environment for chaining.
 // WithErrorMode sets the parse-time error mode for templates parsed
 // through this environment. The default is ErrorModeStrict. See
 // ErrorMode for the semantics of each setting. Returns the environment
@@ -117,6 +113,10 @@ func (e *Environment) ErrorMode() ErrorMode {
 	return e.errorMode
 }
 
+// WithLoader sets the default Loader used by templates parsed through this
+// environment, so they can resolve {% render %} / {% include %} partials
+// without an explicit per-template Template.WithLoader. Returns the
+// environment for chaining.
 func (e *Environment) WithLoader(l Loader) *Environment {
 	e.mu.Lock()
 	e.loader = l
@@ -169,7 +169,7 @@ func (e *Environment) lookupFilter(name string) (Filter, bool) {
 
 // lookupCustomTag returns the registered parser for name, reporting whether
 // it was found and whether it expects a body (block).
-func (e *Environment) lookupCustomTag(name string) (parse TagParser, isBlock bool, ok bool) {
+func (e *Environment) lookupCustomTag(name string) (parse TagParser, isBlock, ok bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	if p, found := e.blockTags[name]; found {

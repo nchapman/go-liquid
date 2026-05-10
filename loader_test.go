@@ -174,12 +174,12 @@ func TestConcurrentRenderAndWithLoader(t *testing.T) {
 	tmpl := MustParse(`{% render "p" %}`).WithLoader(MapLoader{"p": "A"})
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 200; i++ {
+		for range 200 {
 			tmpl.WithLoader(MapLoader{"p": "A"})
 		}
 		close(done)
 	}()
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		if _, err := tmpl.Render(nil); err != nil {
 			t.Fatalf("render: %v", err)
 		}
@@ -516,7 +516,6 @@ func TestBase64DecodeInvalidErrors(t *testing.T) {
 		t.Fatalf("error does not mention base64: %v", err)
 	}
 }
-
 
 func TestSliceReturnsEmptyArrayNotNil(t *testing.T) {
 	// slice on an empty/over-shot range should return [], not nil, so that
@@ -943,13 +942,13 @@ func TestParseErrorEscapesNewlinesInTokenLiteral(t *testing.T) {
 // hardenable types for method-dispatch tests
 type personMethods struct{ first, last string }
 
-func (p personMethods) FullName() string  { return p.first + " " + p.last }
+func (p personMethods) FullName() string { return p.first + " " + p.last }
 func (p personMethods) Initials() (string, error) {
 	return string(p.first[0]) + string(p.last[0]), nil
 }
-func (p *personMethods) Close() error    { panic("Close should not be invoked from a template") }
-func (p personMethods) Save() error      { panic("Save should not be invoked from a template") }
-func (p personMethods) Reset()           { panic("Reset should not be invoked from a template") }
+func (p *personMethods) Close() error     { panic("Close should not be invoked from a template") }
+func (p personMethods) Save() error       { panic("Save should not be invoked from a template") }
+func (p personMethods) Reset()            { panic("Reset should not be invoked from a template") }
 func (p personMethods) Stats() (int, int) { return 1, 2 } // multi-value, not (T, error)
 
 func TestMethodDispatchAllowsDataAccessors(t *testing.T) {
@@ -990,11 +989,8 @@ func (d dropImpl) LiquidLookup(k string) (any, bool) {
 }
 
 func TestDropInterfaceTakesPrecedenceOverFields(t *testing.T) {
-	type withFields struct {
-		X string
-	}
-	// Embed via composition: a Drop wraps any backing data and templates only
-	// see what LiquidLookup returns, not raw struct methods/fields.
+	// A Drop wraps any backing data and templates only see what LiquidLookup
+	// returns, not raw struct methods/fields.
 	d := dropImpl{data: map[string]any{"shown": "hello"}}
 	out, err := Render(`{{ d.shown }}|{{ d.X | default: "absent" }}`,
 		map[string]any{"d": d})

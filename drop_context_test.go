@@ -81,13 +81,6 @@ func TestContextAwareDropReachableViaTopLevel(t *testing.T) {
 
 func TestContextAwareDropGetReadsScope(t *testing.T) {
 	// A drop should be able to peek at sibling variables via Get.
-	type peekDrop struct {
-		ctx RenderContext
-	}
-	// Inline implementation using anonymous types is awkward; use a closure-y
-	// implementation via a small helper.
-	_ = peekDrop{}
-
 	d := &peekDropImpl{}
 	out, err := Render(`{{ d.peer }}`, map[string]any{"d": d, "peer": "neighbor"})
 	if err != nil {

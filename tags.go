@@ -109,8 +109,8 @@ var builtinTagNames = map[string]struct{}{
 	"cycle":     {},
 	"increment": {}, "decrement": {},
 	"render": {}, "include": {},
-	"echo":   {},
-	"liquid": {},
+	"echo":     {},
+	"liquid":   {},
 	"tablerow": {}, "endtablerow": {},
 	"ifchanged": {}, "endifchanged": {},
 	"doc": {}, "enddoc": {},
@@ -124,7 +124,7 @@ type customTagNode struct {
 	column   int
 }
 
-func (n *customTagNode) node()                  {}
+func (n *customTagNode) node()                   {}
 func (n *customTagNode) Pos() (line, column int) { return n.line, n.column }
 
 // customBlockNode is the AST node for a custom block tag with its parsed body.
@@ -136,7 +136,7 @@ type customBlockNode struct {
 	column   int
 }
 
-func (n *customBlockNode) node()                  {}
+func (n *customBlockNode) node()                   {}
 func (n *customBlockNode) Pos() (line, column int) { return n.line, n.column }
 
 // tagCtx adapts an evaluator + body slice to the TagContext interface.
@@ -146,8 +146,8 @@ type tagCtx struct {
 	body []Node
 }
 
-func (c *tagCtx) Get(name string) any            { return c.ev.ctx.get(name) }
-func (c *tagCtx) Assign(name string, value any)  { c.ev.ctx.set(name, value) }
+func (c *tagCtx) Get(name string) any           { return c.ev.ctx.get(name) }
+func (c *tagCtx) Assign(name string, value any) { c.ev.ctx.set(name, value) }
 
 func (c *tagCtx) PushScope(fn func() error) error {
 	prev := c.ev.ctx

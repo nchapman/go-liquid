@@ -127,7 +127,7 @@ func TestMethodAutoInvocationSurface(t *testing.T) {
 // stay unreachable, and only what LiquidLookup exposes is visible.
 type hiddenDrop struct{ token string }
 
-func (h hiddenDrop) Token() string                    { return h.token }
+func (h hiddenDrop) Token() string { return h.token }
 func (h hiddenDrop) LiquidLookup(key string) (any, bool) {
 	if key == "name" {
 		return "public-name", true

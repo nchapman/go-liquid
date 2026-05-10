@@ -21,7 +21,9 @@ type TextNode struct {
 	Column int
 }
 
-func (n *TextNode) node()                   {}
+func (n *TextNode) node() {}
+
+// Pos returns the source line and column of the node.
 func (n *TextNode) Pos() (line, column int) { return n.Line, n.Column }
 
 // OutputNode represents {{ expression }}.
@@ -31,7 +33,9 @@ type OutputNode struct {
 	Column int
 }
 
-func (n *OutputNode) node()                   {}
+func (n *OutputNode) node() {}
+
+// Pos returns the source line and column of the node.
 func (n *OutputNode) Pos() (line, column int) { return n.Line, n.Column }
 
 // Expression is the interface for expression nodes.
@@ -47,8 +51,10 @@ type IdentExpr struct {
 	Column int
 }
 
-func (e *IdentExpr) node()                   {}
-func (e *IdentExpr) expr()                   {}
+func (e *IdentExpr) node() {}
+func (e *IdentExpr) expr() {}
+
+// Pos returns the source line and column of the node.
 func (e *IdentExpr) Pos() (line, column int) { return e.Line, e.Column }
 
 // LiteralExpr represents a literal value (string, int, float, bool, nil).
@@ -58,8 +64,10 @@ type LiteralExpr struct {
 	Column int
 }
 
-func (e *LiteralExpr) node()                   {}
-func (e *LiteralExpr) expr()                   {}
+func (e *LiteralExpr) node() {}
+func (e *LiteralExpr) expr() {}
+
+// Pos returns the source line and column of the node.
 func (e *LiteralExpr) Pos() (line, column int) { return e.Line, e.Column }
 
 // DotExpr represents object.property access.
@@ -70,8 +78,10 @@ type DotExpr struct {
 	Column   int
 }
 
-func (e *DotExpr) node()                   {}
-func (e *DotExpr) expr()                   {}
+func (e *DotExpr) node() {}
+func (e *DotExpr) expr() {}
+
+// Pos returns the source line and column of the node.
 func (e *DotExpr) Pos() (line, column int) { return e.Line, e.Column }
 
 // IndexExpr represents array[index] access.
@@ -82,8 +92,10 @@ type IndexExpr struct {
 	Column int
 }
 
-func (e *IndexExpr) node()                   {}
-func (e *IndexExpr) expr()                   {}
+func (e *IndexExpr) node() {}
+func (e *IndexExpr) expr() {}
+
+// Pos returns the source line and column of the node.
 func (e *IndexExpr) Pos() (line, column int) { return e.Line, e.Column }
 
 // FilterExpr represents `expr | filter` or `expr | filter: arg, key: val`.
@@ -98,8 +110,10 @@ type FilterExpr struct {
 	Column int
 }
 
-func (e *FilterExpr) node()                   {}
-func (e *FilterExpr) expr()                   {}
+func (e *FilterExpr) node() {}
+func (e *FilterExpr) expr() {}
+
+// Pos returns the source line and column of the node.
 func (e *FilterExpr) Pos() (line, column int) { return e.Line, e.Column }
 
 // BinaryExpr represents binary operations (==, !=, <, >, etc).
@@ -111,8 +125,10 @@ type BinaryExpr struct {
 	Column   int
 }
 
-func (e *BinaryExpr) node()                   {}
-func (e *BinaryExpr) expr()                   {}
+func (e *BinaryExpr) node() {}
+func (e *BinaryExpr) expr() {}
+
+// Pos returns the source line and column of the node.
 func (e *BinaryExpr) Pos() (line, column int) { return e.Line, e.Column }
 
 // RangeExpr represents (start..end) range.
@@ -123,8 +139,10 @@ type RangeExpr struct {
 	Column int
 }
 
-func (e *RangeExpr) node()                   {}
-func (e *RangeExpr) expr()                   {}
+func (e *RangeExpr) node() {}
+func (e *RangeExpr) expr() {}
+
+// Pos returns the source line and column of the node.
 func (e *RangeExpr) Pos() (line, column int) { return e.Line, e.Column }
 
 // IfTag represents {% if %}...{% endif %}.
@@ -140,7 +158,9 @@ type IfTag struct {
 	Column     int
 }
 
-func (t *IfTag) node()                   {}
+func (t *IfTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *IfTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // UnlessTag represents {% unless %}...{% endunless %}.
@@ -152,7 +172,9 @@ type UnlessTag struct {
 	Column     int
 }
 
-func (t *UnlessTag) node()                   {}
+func (t *UnlessTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *UnlessTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // CaseTag represents {% case %}...{% endcase %}.
@@ -164,12 +186,15 @@ type CaseTag struct {
 	Column int
 }
 
+// WhenClause represents a single {% when ... %} arm of a case tag.
 type WhenClause struct {
 	Values []Expression
 	Body   []Node
 }
 
-func (t *CaseTag) node()                   {}
+func (t *CaseTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *CaseTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // ForTag represents {% for item in collection %}...{% endfor %}.
@@ -195,7 +220,9 @@ type ForTag struct {
 	LoopName string
 }
 
-func (t *ForTag) node()                   {}
+func (t *ForTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *ForTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // BreakTag represents {% break %}.
@@ -204,7 +231,9 @@ type BreakTag struct {
 	Column int
 }
 
-func (t *BreakTag) node()                   {}
+func (t *BreakTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *BreakTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // ContinueTag represents {% continue %}.
@@ -213,7 +242,9 @@ type ContinueTag struct {
 	Column int
 }
 
-func (t *ContinueTag) node()                   {}
+func (t *ContinueTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *ContinueTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // AssignTag represents {% assign var = expr %}.
@@ -224,7 +255,9 @@ type AssignTag struct {
 	Column   int
 }
 
-func (t *AssignTag) node()                   {}
+func (t *AssignTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *AssignTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // CaptureTag represents {% capture var %}...{% endcapture %}.
@@ -235,7 +268,9 @@ type CaptureTag struct {
 	Column   int
 }
 
-func (t *CaptureTag) node()                   {}
+func (t *CaptureTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *CaptureTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // CommentTag represents {% comment %}...{% endcomment %}.
@@ -245,7 +280,9 @@ type CommentTag struct {
 	Column  int
 }
 
-func (t *CommentTag) node()                   {}
+func (t *CommentTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *CommentTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // RawTag represents {% raw %}...{% endraw %}.
@@ -255,7 +292,9 @@ type RawTag struct {
 	Column  int
 }
 
-func (t *RawTag) node()                   {}
+func (t *RawTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *RawTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // CycleTag represents {% cycle "a", "b", "c" %} or {% cycle "group": "a", "b", "c" %}.
@@ -266,7 +305,9 @@ type CycleTag struct {
 	Column    int
 }
 
-func (t *CycleTag) node()                   {}
+func (t *CycleTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *CycleTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // IncrementTag represents {% increment var %}.
@@ -276,7 +317,9 @@ type IncrementTag struct {
 	Column   int
 }
 
-func (t *IncrementTag) node()                   {}
+func (t *IncrementTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *IncrementTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // DecrementTag represents {% decrement var %}.
@@ -286,7 +329,9 @@ type DecrementTag struct {
 	Column   int
 }
 
-func (t *DecrementTag) node()                   {}
+func (t *DecrementTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *DecrementTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // TablerowTag represents {% tablerow x in collection [cols: N] [limit: M]
@@ -304,7 +349,9 @@ type TablerowTag struct {
 	Column     int
 }
 
-func (t *TablerowTag) node()                   {}
+func (t *TablerowTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *TablerowTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // IfchangedTag represents {% ifchanged %}body{% endifchanged %}. The body
@@ -316,7 +363,9 @@ type IfchangedTag struct {
 	Column int
 }
 
-func (t *IfchangedTag) node()                   {}
+func (t *IfchangedTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *IfchangedTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // DocTag represents {% doc %}content{% enddoc %}. The body is captured as
@@ -328,7 +377,9 @@ type DocTag struct {
 	Column  int
 }
 
-func (t *DocTag) node()                   {}
+func (t *DocTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *DocTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // LiquidTag represents {% liquid ... %}, a block of newline-separated tag
@@ -340,7 +391,9 @@ type LiquidTag struct {
 	Column int
 }
 
-func (t *LiquidTag) node()                   {}
+func (t *LiquidTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *LiquidTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // NamedArg is a key: value pair passed to {% render %} or {% include %}.
@@ -363,7 +416,9 @@ type RenderTag struct {
 	Column    int
 }
 
-func (t *RenderTag) node()                   {}
+func (t *RenderTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *RenderTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // IncludeTag is the legacy partial inclusion form. Unlike RenderTag, it
@@ -380,5 +435,7 @@ type IncludeTag struct {
 	Column    int
 }
 
-func (t *IncludeTag) node()                   {}
+func (t *IncludeTag) node() {}
+
+// Pos returns the source line and column of the node.
 func (t *IncludeTag) Pos() (line, column int) { return t.Line, t.Column }

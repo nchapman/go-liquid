@@ -168,11 +168,11 @@ func TestConcurrentRenderSharedTemplate(t *testing.T) {
 
 	var wg sync.WaitGroup
 	errs := make(chan error, goroutines*iterations)
-	for g := 0; g < goroutines; g++ {
+	for g := range goroutines {
 		wg.Add(1)
 		go func(g int) {
 			defer wg.Done()
-			for i := 0; i < iterations; i++ {
+			for i := range iterations {
 				want := fmt.Sprintf("%d,%d,%d", g*2, (g+1)*2, (g+2)*2)
 				got, err := tpl.Render(map[string]any{"items": []any{g, g + 1, g + 2}})
 				if err != nil {
@@ -206,7 +206,7 @@ func TestConcurrentRenderWithPartials(t *testing.T) {
 	var wg sync.WaitGroup
 	const N = 64
 	bad := make(chan string, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

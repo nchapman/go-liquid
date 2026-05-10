@@ -64,8 +64,8 @@ func filterErrorf(format string, args ...any) any {
 
 // pos and kw wrap raw filter functions into the Filter interface so the
 // registry literal below stays tidy.
-func pos(fn FilterFunc) Filter      { return fn }
-func kw(fn KwargFilterFunc) Filter  { return fn }
+func pos(fn FilterFunc) Filter     { return fn }
+func kw(fn KwargFilterFunc) Filter { return fn }
 
 // registerStandardFilters writes the built-in filter set into e. Called by
 // NewEnvironment so every fresh environment ships with the Shopify/Ruby
@@ -83,33 +83,33 @@ func registerStandardFilters(e *Environment) {
 // future environment.
 var standardFilters = map[string]Filter{
 	// String filters
-	"upcase":        pos(filterUpcase),
-	"downcase":      pos(filterDowncase),
-	"capitalize":    pos(filterCapitalize),
-	"strip":         pos(filterStrip),
-	"lstrip":        pos(filterLstrip),
-	"rstrip":        pos(filterRstrip),
-	"escape":        pos(filterEscape),
-	"h":             pos(filterEscape), // Ruby alias for `escape`.
-	"split":         pos(filterSplit),
-	"append":        pos(filterAppend),
-	"prepend":       pos(filterPrepend),
-	"replace":       pos(filterReplace),
-	"replace_first": pos(filterReplaceFirst),
-	"remove":        pos(filterRemove),
-	"remove_first":  pos(filterRemoveFirst),
-	"truncate":      pos(filterTruncate),
-	"truncatewords": pos(filterTruncateWords),
-	"slice":         pos(filterSlice),
-	"newline_to_br": pos(filterNewlineToBr),
-	"escape_once":   pos(filterEscapeOnce),
-	"url_encode":    pos(filterURLEncode),
-	"url_decode":    pos(filterURLDecode),
-	"strip_html":    pos(filterStripHTML),
+	"upcase":         pos(filterUpcase),
+	"downcase":       pos(filterDowncase),
+	"capitalize":     pos(filterCapitalize),
+	"strip":          pos(filterStrip),
+	"lstrip":         pos(filterLstrip),
+	"rstrip":         pos(filterRstrip),
+	"escape":         pos(filterEscape),
+	"h":              pos(filterEscape), // Ruby alias for `escape`.
+	"split":          pos(filterSplit),
+	"append":         pos(filterAppend),
+	"prepend":        pos(filterPrepend),
+	"replace":        pos(filterReplace),
+	"replace_first":  pos(filterReplaceFirst),
+	"remove":         pos(filterRemove),
+	"remove_first":   pos(filterRemoveFirst),
+	"truncate":       pos(filterTruncate),
+	"truncatewords":  pos(filterTruncateWords),
+	"slice":          pos(filterSlice),
+	"newline_to_br":  pos(filterNewlineToBr),
+	"escape_once":    pos(filterEscapeOnce),
+	"url_encode":     pos(filterURLEncode),
+	"url_decode":     pos(filterURLDecode),
+	"strip_html":     pos(filterStripHTML),
 	"strip_newlines": pos(filterStripNewlines),
-	"squish":        pos(filterSquish),
-	"replace_last":  pos(filterReplaceLast),
-	"remove_last":   pos(filterRemoveLast),
+	"squish":         pos(filterSquish),
+	"replace_last":   pos(filterReplaceLast),
+	"remove_last":    pos(filterRemoveLast),
 
 	// Base64
 	"base64_encode":          pos(filterBase64Encode),
@@ -158,23 +158,22 @@ var standardFilters = map[string]Filter{
 
 // String filters
 
-func filterUpcase(input any, args ...any) any {
+func filterUpcase(input any, _ ...any) any {
 	return strings.ToUpper(toString(input))
 }
 
-func filterDowncase(input any, args ...any) any {
+func filterDowncase(input any, _ ...any) any {
 	return strings.ToLower(toString(input))
 }
 
-func filterCapitalize(input any, args ...any) any {
+func filterCapitalize(input any, _ ...any) any {
 	s := toString(input)
-	if len(s) == 0 {
+	if s == "" {
 		return s
 	}
 	r, size := utf8.DecodeRuneInString(s)
 	return strings.ToUpper(string(r)) + strings.ToLower(s[size:])
 }
-
 
 // stripChars is the cutset for strip/lstrip/rstrip. Matches Ruby's
 // String#strip (ASCII whitespace plus null), which is what Shopify uses.
@@ -182,22 +181,22 @@ func filterCapitalize(input any, args ...any) any {
 // templates relying on Shopify's behavior produce identical output.
 const stripChars = " \t\n\r\v\f\x00"
 
-func filterStrip(input any, args ...any) any {
+func filterStrip(input any, _ ...any) any {
 	return strings.Trim(toString(input), stripChars)
 }
 
-func filterEscape(input any, args ...any) any {
+func filterEscape(input any, _ ...any) any {
 	if input == nil {
 		return nil
 	}
 	return html.EscapeString(toString(input))
 }
 
-func filterLstrip(input any, args ...any) any {
+func filterLstrip(input any, _ ...any) any {
 	return strings.TrimLeft(toString(input), stripChars)
 }
 
-func filterRstrip(input any, args ...any) any {
+func filterRstrip(input any, _ ...any) any {
 	return strings.TrimRight(toString(input), stripChars)
 }
 
@@ -236,9 +235,9 @@ func filterReplace(input any, args ...any) any {
 	if len(args) < 2 {
 		return s
 	}
-	old := toString(args[0])
-	new := toString(args[1])
-	return strings.ReplaceAll(s, old, new)
+	oldStr := toString(args[0])
+	newStr := toString(args[1])
+	return strings.ReplaceAll(s, oldStr, newStr)
 }
 
 func filterReplaceFirst(input any, args ...any) any {
@@ -246,9 +245,9 @@ func filterReplaceFirst(input any, args ...any) any {
 	if len(args) < 2 {
 		return s
 	}
-	old := toString(args[0])
-	new := toString(args[1])
-	return strings.Replace(s, old, new, 1)
+	oldStr := toString(args[0])
+	newStr := toString(args[1])
+	return strings.Replace(s, oldStr, newStr, 1)
 }
 
 func filterRemove(input any, args ...any) any {
@@ -376,7 +375,7 @@ func filterSlice(input any, args ...any) any {
 	return slice[offset:end]
 }
 
-func filterNewlineToBr(input any, args ...any) any {
+func filterNewlineToBr(input any, _ ...any) any {
 	s := toString(input)
 	// Shopify inserts the <br /> before the newline rather than replacing
 	// it, so source line breaks survive into the rendered output.
@@ -386,7 +385,7 @@ func filterNewlineToBr(input any, args ...any) any {
 
 // Array filters
 
-func filterFirst(input any, args ...any) any {
+func filterFirst(input any, _ ...any) any {
 	// Ruby Liquid returns "" (not nil) for first/last on an empty string,
 	// matching String#[]. Treat the string case explicitly so empties round-
 	// trip predictably and so the result is a proper character (rune), not
@@ -405,7 +404,7 @@ func filterFirst(input any, args ...any) any {
 	return slice[0]
 }
 
-func filterLast(input any, args ...any) any {
+func filterLast(input any, _ ...any) any {
 	if s, ok := input.(string); ok {
 		if s == "" {
 			return ""
@@ -420,7 +419,7 @@ func filterLast(input any, args ...any) any {
 	return slice[len(slice)-1]
 }
 
-func filterSize(input any, args ...any) any {
+func filterSize(input any, _ ...any) any {
 	if input == nil {
 		return 0
 	}
@@ -438,9 +437,10 @@ func filterSize(input any, args ...any) any {
 			return utf8.RuneCountInString(rv.String())
 		case reflect.Array, reflect.Slice, reflect.Map:
 			return rv.Len()
+		default:
+			return 0
 		}
 	}
-	return 0
 }
 
 func filterJoin(input any, args ...any) any {
@@ -457,7 +457,7 @@ func filterJoin(input any, args ...any) any {
 	return strings.Join(strs, sep)
 }
 
-func filterReverse(input any, args ...any) any {
+func filterReverse(input any, _ ...any) any {
 	slice := toFilterInput(input)
 	result := make([]any, len(slice))
 	for i, v := range slice {
@@ -488,9 +488,7 @@ func filterSort(input any, args ...any) any {
 	}
 
 	// Sort by value
-	slices.SortFunc(result, func(a, b any) int {
-		return compareValues(a, b)
-	})
+	slices.SortFunc(result, compareValues)
 	return result
 }
 
@@ -648,8 +646,7 @@ func filterCompact(input any, args ...any) any {
 
 func filterConcat(input any, args ...any) any {
 	slice := toFilterInput(input)
-	result := make([]any, len(slice))
-	copy(result, slice)
+	result := append(make([]any, 0, len(slice)), slice...)
 
 	for _, arg := range args {
 		if !isArrayLike(arg) {
@@ -928,7 +925,7 @@ func filterModulo(input any, args ...any) any {
 	return a % b
 }
 
-func filterAbs(input any, args ...any) any {
+func filterAbs(input any, _ ...any) any {
 	num := toNumber(input)
 	if f, ok := num.(float64); ok {
 		return math.Abs(f)
@@ -952,12 +949,12 @@ func filterRound(input any, args ...any) any {
 	return int64(math.Round(f))
 }
 
-func filterCeil(input any, args ...any) any {
+func filterCeil(input any, _ ...any) any {
 	f := toFloat(toNumber(input))
 	return int64(math.Ceil(f))
 }
 
-func filterFloor(input any, args ...any) any {
+func filterFloor(input any, _ ...any) any {
 	f := toFloat(toNumber(input))
 	return int64(math.Floor(f))
 }
@@ -1020,7 +1017,7 @@ func filterDate(input any, args ...any) any {
 	case int64:
 		t = time.Unix(v, 0)
 	case uint, uint32, uint64:
-		t = time.Unix(int64(toInt(toNumber(v))), 0)
+		t = time.Unix(toInt(toNumber(v)), 0)
 	case float32:
 		t = time.Unix(int64(v), 0)
 	case float64:
@@ -1074,163 +1071,166 @@ func strftimeToGo(t time.Time, format string) string {
 			sb.WriteByte(format[i])
 			continue
 		}
-		// Parse Ruby strftime flag + width modifiers between `%` and the
-		// directive: `-` strips zero-padding, `_` pads with spaces, `0`
-		// forces zero-padding, optional digits set an explicit width
-		// (e.g. `%-d`, `%_3d`, `%04Y`). Multiple flags are tolerated;
-		// the last one wins, matching Ruby.
-		flag := byte(0) // 0|'-'|'_'|'0'
-		width := -1
-		j := i + 1
-	flagloop:
-		for j < len(format) {
-			switch format[j] {
-			case '-', '_', '0':
-				flag = format[j]
-				j++
-			default:
-				break flagloop
-			}
-		}
-		for j < len(format) && format[j] >= '0' && format[j] <= '9' {
-			if width < 0 {
-				width = 0
-			}
-			width = width*10 + int(format[j]-'0')
-			j++
-		}
+		flag, width, j := parseStrftimeModifiers(format, i+1)
 		if j >= len(format) {
 			// Trailing `%` with flags but no directive — emit verbatim.
 			sb.WriteString(format[i:])
 			i = len(format) - 1
 			continue
 		}
-		directive := format[j]
+		writeStrftimeDirective(&sb, t, format[j], flag, width)
 		i = j
-		switch directive {
-		case 'Y':
-			writeStrftimeNum(&sb, t.Year(), 4, flag, width)
-		case 'y':
-			writeStrftimeNum(&sb, t.Year()%100, 2, flag, width)
-		case 'm':
-			writeStrftimeNum(&sb, int(t.Month()), 2, flag, width)
-		case 'd':
-			writeStrftimeNum(&sb, t.Day(), 2, flag, width)
-		case 'e':
-			// `%e` is space-padded by default; treat it as `%_d` so
-			// flag overrides still work (`%-e` → no pad, `%0e` → zero pad).
-			f := flag
-			if f == 0 {
-				f = '_'
-			}
-			writeStrftimeNum(&sb, t.Day(), 2, f, width)
-		case 'H':
-			writeStrftimeNum(&sb, t.Hour(), 2, flag, width)
-		case 'k':
-			f := flag
-			if f == 0 {
-				f = '_'
-			}
-			writeStrftimeNum(&sb, t.Hour(), 2, f, width)
-		case 'I':
-			h := t.Hour() % 12
-			if h == 0 {
-				h = 12
-			}
-			writeStrftimeNum(&sb, h, 2, flag, width)
-		case 'l':
-			h := t.Hour() % 12
-			if h == 0 {
-				h = 12
-			}
-			f := flag
-			if f == 0 {
-				f = '_'
-			}
-			writeStrftimeNum(&sb, h, 2, f, width)
-		case 'M':
-			writeStrftimeNum(&sb, t.Minute(), 2, flag, width)
-		case 'S':
-			writeStrftimeNum(&sb, t.Second(), 2, flag, width)
-		case 'p':
-			if t.Hour() < 12 {
-				sb.WriteString("AM")
-			} else {
-				sb.WriteString("PM")
-			}
-		case 'P':
-			if t.Hour() < 12 {
-				sb.WriteString("am")
-			} else {
-				sb.WriteString("pm")
-			}
-		case 'A':
-			sb.WriteString(t.Weekday().String())
-		case 'a':
-			sb.WriteString(t.Weekday().String()[:3])
-		case 'B':
-			sb.WriteString(t.Month().String())
-		case 'b', 'h':
-			sb.WriteString(t.Month().String()[:3])
-		case 'j':
-			writeStrftimeNum(&sb, t.YearDay(), 3, flag, width)
-		case 'w':
-			writeStrftimeNum(&sb, int(t.Weekday()), 1, flag, width) // Sunday=0
-		case 'u':
-			d := int(t.Weekday())
-			if d == 0 {
-				d = 7
-			}
-			writeStrftimeNum(&sb, d, 1, flag, width) // ISO Monday=1..Sunday=7
-		case 'U':
-			writeStrftimeNum(&sb, weekOfYearSundayStart(t), 2, flag, width)
-		case 'W':
-			writeStrftimeNum(&sb, weekOfYearMondayStart(t), 2, flag, width)
-		case 's':
-			// Unix epoch can exceed 32 bits past 2038, so format the
-			// int64 directly rather than narrowing through writeStrftimeNum.
-			fmt.Fprintf(&sb, "%d", t.Unix())
-		case 'Z':
-			sb.WriteString(t.Format("MST"))
-		case 'z':
-			sb.WriteString(t.Format("-0700"))
-		case 'c':
-			// Ruby's default %c is "%a %b %e %H:%M:%S %Y".
-			sb.WriteString(strftimeToGo(t, "%a %b %e %H:%M:%S %Y"))
-		case 'x':
-			sb.WriteString(strftimeToGo(t, "%m/%d/%y"))
-		case 'X':
-			sb.WriteString(strftimeToGo(t, "%H:%M:%S"))
-		case 'D':
-			sb.WriteString(strftimeToGo(t, "%m/%d/%y"))
-		case 'F':
-			sb.WriteString(strftimeToGo(t, "%Y-%m-%d"))
-		case 'R':
-			sb.WriteString(strftimeToGo(t, "%H:%M"))
-		case 'T':
-			sb.WriteString(strftimeToGo(t, "%H:%M:%S"))
-		case 'r':
-			sb.WriteString(strftimeToGo(t, "%I:%M:%S %p"))
-		case 'n':
-			sb.WriteByte('\n')
-		case 't':
-			sb.WriteByte('\t')
-		case '%':
-			sb.WriteByte('%')
-		default:
-			// Unknown directive: emit `%`, any modifiers, and the
-			// directive verbatim so authors can spot the typo.
-			sb.WriteByte('%')
-			if flag != 0 {
-				sb.WriteByte(flag)
-			}
-			if width >= 0 {
-				fmt.Fprintf(&sb, "%d", width)
-			}
-			sb.WriteByte(directive)
-		}
 	}
 	return sb.String()
+}
+
+// parseStrftimeModifiers reads the flag + width modifiers between `%` and the
+// directive byte, starting at start. Returns the flag (0 if none), the
+// explicit width (-1 if none), and the index of the directive byte.
+//
+// Ruby strftime flags: `-` strips zero-padding, `_` pads with spaces, `0`
+// forces zero-padding. Multiple flags are tolerated; the last one wins.
+func parseStrftimeModifiers(format string, start int) (flag byte, width, end int) {
+	width = -1
+	j := start
+	for j < len(format) {
+		c := format[j]
+		if c != '-' && c != '_' && c != '0' {
+			break
+		}
+		flag = c
+		j++
+	}
+	for j < len(format) && format[j] >= '0' && format[j] <= '9' {
+		if width < 0 {
+			width = 0
+		}
+		width = width*10 + int(format[j]-'0')
+		j++
+	}
+	return flag, width, j
+}
+
+// writeStrftimeDirective writes the formatted output of a single strftime
+// directive into sb. The width is intrinsic to the Ruby strftime spec —
+// every supported directive byte appears as one case — and grouping cases
+// into per-category helpers would scatter the shared flag/width handling.
+//
+//nolint:gocyclo,cyclop,funlen // strftime directive dispatch; width matches the Ruby spec.
+func writeStrftimeDirective(sb *strings.Builder, t time.Time, directive, flag byte, width int) {
+	// spacePad returns flag, defaulting to '_' (space-pad) for directives
+	// whose Ruby default is space-padded (e.g. %e, %k, %l).
+	spacePad := func() byte {
+		if flag == 0 {
+			return '_'
+		}
+		return flag
+	}
+
+	switch directive {
+	case 'Y':
+		writeStrftimeNum(sb, t.Year(), 4, flag, width)
+	case 'y':
+		writeStrftimeNum(sb, t.Year()%100, 2, flag, width)
+	case 'm':
+		writeStrftimeNum(sb, int(t.Month()), 2, flag, width)
+	case 'd':
+		writeStrftimeNum(sb, t.Day(), 2, flag, width)
+	case 'e':
+		writeStrftimeNum(sb, t.Day(), 2, spacePad(), width)
+	case 'H':
+		writeStrftimeNum(sb, t.Hour(), 2, flag, width)
+	case 'k':
+		writeStrftimeNum(sb, t.Hour(), 2, spacePad(), width)
+	case 'I':
+		writeStrftimeNum(sb, hour12(t), 2, flag, width)
+	case 'l':
+		writeStrftimeNum(sb, hour12(t), 2, spacePad(), width)
+	case 'M':
+		writeStrftimeNum(sb, t.Minute(), 2, flag, width)
+	case 'S':
+		writeStrftimeNum(sb, t.Second(), 2, flag, width)
+	case 'p':
+		if t.Hour() < 12 {
+			sb.WriteString("AM")
+		} else {
+			sb.WriteString("PM")
+		}
+	case 'P':
+		if t.Hour() < 12 {
+			sb.WriteString("am")
+		} else {
+			sb.WriteString("pm")
+		}
+	case 'A':
+		sb.WriteString(t.Weekday().String())
+	case 'a':
+		sb.WriteString(t.Weekday().String()[:3])
+	case 'B':
+		sb.WriteString(t.Month().String())
+	case 'b', 'h':
+		sb.WriteString(t.Month().String()[:3])
+	case 'j':
+		writeStrftimeNum(sb, t.YearDay(), 3, flag, width)
+	case 'w':
+		writeStrftimeNum(sb, int(t.Weekday()), 1, flag, width) // Sunday=0
+	case 'u':
+		d := int(t.Weekday())
+		if d == 0 {
+			d = 7
+		}
+		writeStrftimeNum(sb, d, 1, flag, width) // ISO Monday=1..Sunday=7
+	case 'U':
+		writeStrftimeNum(sb, weekOfYearSundayStart(t), 2, flag, width)
+	case 'W':
+		writeStrftimeNum(sb, weekOfYearMondayStart(t), 2, flag, width)
+	case 's':
+		// Unix epoch can exceed 32 bits past 2038, so format the int64
+		// directly rather than narrowing through writeStrftimeNum.
+		fmt.Fprintf(sb, "%d", t.Unix())
+	case 'Z':
+		sb.WriteString(t.Format("MST"))
+	case 'z':
+		sb.WriteString(t.Format("-0700"))
+	case 'c':
+		sb.WriteString(strftimeToGo(t, "%a %b %e %H:%M:%S %Y"))
+	case 'x', 'D':
+		sb.WriteString(strftimeToGo(t, "%m/%d/%y"))
+	case 'X', 'T':
+		sb.WriteString(strftimeToGo(t, "%H:%M:%S"))
+	case 'F':
+		sb.WriteString(strftimeToGo(t, "%Y-%m-%d"))
+	case 'R':
+		sb.WriteString(strftimeToGo(t, "%H:%M"))
+	case 'r':
+		sb.WriteString(strftimeToGo(t, "%I:%M:%S %p"))
+	case 'n':
+		sb.WriteByte('\n')
+	case 't':
+		sb.WriteByte('\t')
+	case '%':
+		sb.WriteByte('%')
+	default:
+		// Unknown directive: emit `%`, any modifiers, and the directive
+		// verbatim so authors can spot the typo.
+		sb.WriteByte('%')
+		if flag != 0 {
+			sb.WriteByte(flag)
+		}
+		if width >= 0 {
+			fmt.Fprintf(sb, "%d", width)
+		}
+		sb.WriteByte(directive)
+	}
+}
+
+// hour12 returns t's hour in 12-hour format (1..12).
+func hour12(t time.Time) int {
+	h := t.Hour() % 12
+	if h == 0 {
+		return 12
+	}
+	return h
 }
 
 // writeStrftimeNum formats n into sb using strftime-style flag and width
@@ -1454,9 +1454,10 @@ func isEmpty(v any) bool {
 		switch rv.Kind() {
 		case reflect.Array, reflect.Slice, reflect.Map, reflect.String:
 			return rv.Len() == 0
+		default:
+			return false
 		}
 	}
-	return false
 }
 
 // isBlank checks if a value matches the "blank" special value.
@@ -1481,8 +1482,8 @@ func isBlank(v any) bool {
 			return rv.Len() == 0
 		case reflect.String:
 			return strings.TrimSpace(rv.String()) == ""
+		default:
+			return false
 		}
 	}
-	return false
 }
-

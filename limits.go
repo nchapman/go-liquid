@@ -154,7 +154,7 @@ func assignScoreOf(v any) int {
 	switch rv.Kind() {
 	case reflect.Slice, reflect.Array:
 		sum := 1
-		for i := 0; i < rv.Len(); i++ {
+		for i := range rv.Len() {
 			sum += assignScoreOf(rv.Index(i).Interface())
 		}
 		return sum
@@ -166,8 +166,9 @@ func assignScoreOf(v any) int {
 			sum += assignScoreOf(iter.Value().Interface())
 		}
 		return sum
+	default:
+		return 1
 	}
-	return 1
 }
 
 // limitsWriter wraps the user-supplied io.Writer and trips the

@@ -246,7 +246,7 @@ func toStringMap(data any) map[string]any {
 	case reflect.Struct:
 		out := make(map[string]any, rv.NumField())
 		t := rv.Type()
-		for i := 0; i < rv.NumField(); i++ {
+		for i := range rv.NumField() {
 			f := t.Field(i)
 			if !f.IsExported() {
 				continue
@@ -258,6 +258,7 @@ func toStringMap(data any) map[string]any {
 			out[name] = rv.Field(i).Interface()
 		}
 		return out
+	default:
+		return map[string]any{}
 	}
-	return map[string]any{}
 }
