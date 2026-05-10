@@ -1367,16 +1367,28 @@ func (e *evaluator) evalDecrementTag(w io.Writer, tag *DecrementTag) error {
 // wrapped in `<td class="colN">…</td>`, every `cols` items closes the
 // current row and opens the next, and the final `</tr>\n` closes.
 func (e *evaluator) evalTablerowTag(w io.Writer, tag *TablerowTag) error {
-	collection, err := e.evalExpr(tag.Collection)
-	if err != nil {
-		return err
+	// Range literals (1..N) are materialized the same way as in {% for %}
+	// — toSlice doesn't know about RangeExpr.
+	var raw []any
+	if rangeExpr, ok := tag.Collection.(*RangeExpr); ok {
+		r, err := e.materializeRange(rangeExpr)
+		if err != nil {
+			return err
+		}
+		raw = r
+	} else {
+		collection, err := e.evalExpr(tag.Collection)
+		if err != nil {
+			return err
+		}
+		// Shopify short-circuits to "" when the collection itself is nil,
+		// only emitting <tr>…</tr> markup for actual (possibly empty) arrays.
+		if collection == nil {
+			return nil
+		}
+		raw = toSlice(collection)
 	}
-	// Shopify short-circuits to "" when the collection itself is nil,
-	// only emitting <tr>…</tr> markup for actual (possibly empty) arrays.
-	if collection == nil {
-		return nil
-	}
-	items, err := e.applyTablerowSlice(toSlice(collection), tag)
+	items, err := e.applyTablerowSlice(raw, tag)
 	if err != nil {
 		return err
 	}
@@ -1430,8 +1442,11 @@ func (e *evaluator) applyTablerowSlice(items []any, tag *TablerowTag) ([]any, er
 	return items, nil
 }
 
-// tablerowCols returns the configured column count, falling back to len(items)
-// when the operand is missing or non-positive (matching Shopify).
+// tablerowCols returns the configured column count.
+//   - No `cols:` argument: fall back to len(items) (one full row).
+//   - `cols:` evaluates to a positive integer: use it.
+//   - `cols: nil` (or any non-positive value): treat as "no row break" —
+//     all items go in row 1 and col_last is never true. Ruby parity.
 func (e *evaluator) tablerowCols(tag *TablerowTag, defaultCols int) (int, error) {
 	if tag.Cols == nil {
 		return defaultCols, nil
@@ -1443,7 +1458,9 @@ func (e *evaluator) tablerowCols(tag *TablerowTag, defaultCols int) (int, error)
 	if n > 0 {
 		return n, nil
 	}
-	return defaultCols, nil
+	// Explicit nil/0 cols: pick a sentinel larger than any item count so
+	// col never equals cols and the row never breaks.
+	return defaultCols + 1, nil
 }
 
 // renderTablerowCells iterates items, emitting <td> per cell and <tr> row
@@ -1457,7 +1474,10 @@ func (e *evaluator) renderTablerowCells(w io.Writer, items []any, cols int, tag 
 	for i, item := range items {
 		col := i%cols + 1
 		row := i/cols + 1
-		colLast := col == cols || i == length-1
+		// col_last reflects "this cell closes the current row" — that is,
+		// col equals cols. The final item of the collection is NOT
+		// automatically col_last; Ruby only flags it when col == cols.
+		colLast := col == cols
 		isLast := i == length-1
 
 		tl.index0 = i
