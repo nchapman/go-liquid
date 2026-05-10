@@ -3,6 +3,7 @@ package liquid
 import (
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
 )
@@ -69,25 +70,36 @@ func newEvaluator(data map[string]any) *evaluator {
 	}
 }
 
-// evaluate executes the template and returns the result.
-func (e *evaluator) evaluate(tmpl *templateAST) (string, error) {
-	return e.evalNodes(tmpl.nodes)
+// evaluate writes the template's rendered output to w.
+func (e *evaluator) evaluate(w io.Writer, tmpl *templateAST) error {
+	return e.evalNodes(w, tmpl.nodes)
 }
 
-func (e *evaluator) evalNodes(nodes []Node) (string, error) {
-	var sb strings.Builder
+// evalNodes renders each node into w in order, propagating the first
+// error (or break/continue control signal) back to the caller.
+func (e *evaluator) evalNodes(w io.Writer, nodes []Node) error {
 	for _, node := range nodes {
-		result, err := e.evalNode(node)
-		if err != nil {
-			return "", err
+		if err := e.evalNode(w, node); err != nil {
+			return err
 		}
-		sb.WriteString(result)
+	}
+	return nil
+}
+
+// evalNodeToString is the scratch-buffer escape hatch for tags whose
+// output must be inspected before being emitted: {% capture %} stores
+// the result in a variable; {% ifchanged %} compares it against the
+// last emission; tablerow wraps each cell's body in <td>...</td>.
+func (e *evaluator) evalNodeToString(nodes []Node) (string, error) {
+	var sb strings.Builder
+	if err := e.evalNodes(&sb, nodes); err != nil {
+		return sb.String(), err
 	}
 	return sb.String(), nil
 }
 
-func (e *evaluator) evalNode(node Node) (string, error) {
-	out, err := e.evalNodeInner(node)
+func (e *evaluator) evalNode(w io.Writer, node Node) error {
+	err := e.evalNodeInner(w, node)
 	// Anchor the error to this node's position if the inner call returned a
 	// bare error; deeper sites (filter, partial) already wrap at finer
 	// positions and wrapAtNode is a no-op for *RenderError. errBreak and
@@ -96,100 +108,103 @@ func (e *evaluator) evalNode(node Node) (string, error) {
 	if err != nil && !errors.Is(err, errBreak) && !errors.Is(err, errContinue) {
 		err = wrapAtNode(node, err, e.templateName)
 	}
-	return out, err
+	return err
 }
 
-func (e *evaluator) evalNodeInner(node Node) (string, error) {
+func (e *evaluator) evalNodeInner(w io.Writer, node Node) error {
 	switch n := node.(type) {
 	case *TextNode:
-		return n.Text, nil
+		_, err := io.WriteString(w, n.Text)
+		return err
 
 	case *OutputNode:
 		val, err := e.evalExpr(n.Expr)
 		if err != nil {
-			return "", err
+			return err
 		}
-		return toString(val), nil
+		_, err = io.WriteString(w, toString(val))
+		return err
 
 	case *IfTag:
-		return e.evalIfTag(n)
+		return e.evalIfTag(w, n)
 
 	case *UnlessTag:
-		return e.evalUnlessTag(n)
+		return e.evalUnlessTag(w, n)
 
 	case *CaseTag:
-		return e.evalCaseTag(n)
+		return e.evalCaseTag(w, n)
 
 	case *ForTag:
-		return e.evalForTag(n)
+		return e.evalForTag(w, n)
 
 	case *BreakTag:
-		return "", errBreak
+		return errBreak
 
 	case *ContinueTag:
-		return "", errContinue
+		return errContinue
 
 	case *AssignTag:
 		val, err := e.evalExpr(n.Value)
 		if err != nil {
-			return "", err
+			return err
 		}
 		e.ctx.setGlobal(n.Variable, val)
-		return "", nil
+		return nil
 
 	case *CaptureTag:
-		captured, err := e.evalNodes(n.Body)
+		captured, err := e.evalNodeToString(n.Body)
 		if err != nil {
-			return "", err
+			return err
 		}
 		e.ctx.setGlobal(n.Variable, captured)
-		return "", nil
+		return nil
 
 	case *CommentTag:
-		return "", nil
+		return nil
 
 	case *RawTag:
-		return n.Content, nil
+		_, err := io.WriteString(w, n.Content)
+		return err
 
 	case *CycleTag:
-		return e.evalCycleTag(n)
+		return e.evalCycleTag(w, n)
 
 	case *IncrementTag:
-		return e.evalIncrementTag(n)
+		return e.evalIncrementTag(w, n)
 
 	case *DecrementTag:
-		return e.evalDecrementTag(n)
+		return e.evalDecrementTag(w, n)
 
 	case *RenderTag:
-		return e.evalRenderTag(n)
+		return e.evalRenderTag(w, n)
 
 	case *IncludeTag:
-		return e.evalIncludeTag(n)
+		return e.evalIncludeTag(w, n)
 
 	case *LiquidTag:
-		return e.evalNodes(n.Body)
+		return e.evalNodes(w, n.Body)
 
 	case *TablerowTag:
-		return e.evalTablerowTag(n)
+		return e.evalTablerowTag(w, n)
 
 	case *IfchangedTag:
-		return e.evalIfchangedTag(n)
+		return e.evalIfchangedTag(w, n)
 
 	case *DocTag:
-		return "", nil
+		return nil
 
 	default:
-		return "", nil
+		return nil
 	}
 }
 
 // evalRenderTag evaluates {% render %} in an isolated scope. Only explicitly
 // bound variables are visible to the partial; the partial cannot see or
 // modify caller variables.
-func (e *evaluator) evalRenderTag(tag *RenderTag) (string, error) {
+func (e *evaluator) evalRenderTag(w io.Writer, tag *RenderTag) error {
 	partial, err := e.loadPartial(tag.Template)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	// Build the data map the partial sees. `with` is bound first so that
@@ -198,7 +213,7 @@ func (e *evaluator) evalRenderTag(tag *RenderTag) (string, error) {
 	if tag.With != nil {
 		val, err := e.evalExpr(tag.With)
 		if err != nil {
-			return "", err
+			return err
 		}
 		// Skip nil bindings so the partial's `default:` filter applies, matching
 		// Shopify Liquid's behavior for unset `with` operands.
@@ -208,7 +223,7 @@ func (e *evaluator) evalRenderTag(tag *RenderTag) (string, error) {
 	}
 	args, err := e.evalNamedArgs(tag.Args)
 	if err != nil {
-		return "", err
+		return err
 	}
 	for k, v := range args {
 		data[k] = v
@@ -218,11 +233,10 @@ func (e *evaluator) evalRenderTag(tag *RenderTag) (string, error) {
 	if tag.For != nil {
 		coll, err := e.evalExpr(tag.For)
 		if err != nil {
-			return "", err
+			return err
 		}
 		items := toSlice(coll)
 		alias := partialAlias(tag.ForAlias, tag.Template)
-		var sb strings.Builder
 		length := len(items)
 		for i, item := range items {
 			itemData := make(map[string]any, len(data)+2)
@@ -235,27 +249,25 @@ func (e *evaluator) evalRenderTag(tag *RenderTag) (string, error) {
 			// alias), so {% render "card" for items as item %} exposes
 			// forloop.name == "card".
 			itemData["forloop"] = newForloop(i, length, tag.Template, nil)
-			out, err := e.renderPartialIsolated(partial, itemData)
-			if err != nil {
-				return "", err
+			if err := e.renderPartialIsolated(w, partial, itemData); err != nil {
+				return err
 			}
-			sb.WriteString(out)
 		}
-		return sb.String(), nil
+		return nil
 	}
 
-	return e.renderPartialIsolated(partial, data)
+	return e.renderPartialIsolated(w, partial, data)
 }
 
 // evalIncludeTag is the legacy form: shares the parent scope. Variables
 // assigned in the partial leak into the caller.
-func (e *evaluator) evalIncludeTag(tag *IncludeTag) (string, error) {
+func (e *evaluator) evalIncludeTag(w io.Writer, tag *IncludeTag) error {
 	partial, err := e.loadPartial(tag.Template)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if e.partialDepth >= maxPartialDepth {
-		return "", fmt.Errorf("partial depth exceeded %d (possible cycle in %q)", maxPartialDepth, tag.Template)
+		return fmt.Errorf("partial depth exceeded %d (possible cycle in %q)", maxPartialDepth, tag.Template)
 	}
 	e.partialDepth++
 	defer func() { e.partialDepth-- }()
@@ -263,7 +275,7 @@ func (e *evaluator) evalIncludeTag(tag *IncludeTag) (string, error) {
 	if tag.With != nil {
 		val, err := e.evalExpr(tag.With)
 		if err != nil {
-			return "", err
+			return err
 		}
 		if val != nil {
 			e.ctx.set(partialAlias(tag.WithAlias, tag.Template), val)
@@ -271,7 +283,7 @@ func (e *evaluator) evalIncludeTag(tag *IncludeTag) (string, error) {
 	}
 	args, err := e.evalNamedArgs(tag.Args)
 	if err != nil {
-		return "", err
+		return err
 	}
 	for k, v := range args {
 		e.ctx.set(k, v)
@@ -280,7 +292,7 @@ func (e *evaluator) evalIncludeTag(tag *IncludeTag) (string, error) {
 	if tag.For != nil {
 		coll, err := e.evalExpr(tag.For)
 		if err != nil {
-			return "", err
+			return err
 		}
 		items := toSlice(coll)
 		alias := partialAlias(tag.ForAlias, tag.Template)
@@ -288,20 +300,17 @@ func (e *evaluator) evalIncludeTag(tag *IncludeTag) (string, error) {
 		// include shares parent scope, so the enclosing forloop (if any)
 		// becomes parentloop.
 		parent, _ := e.ctx.get("forloop").(map[string]any)
-		var sb strings.Builder
 		for i, item := range items {
 			e.ctx.set(alias, item)
 			e.ctx.set("forloop", newForloop(i, length, alias, parent))
-			out, err := e.evalNodes(partial.ast.nodes)
-			if err != nil {
-				return "", err
+			if err := e.evalNodes(w, partial.ast.nodes); err != nil {
+				return err
 			}
-			sb.WriteString(out)
 		}
-		return sb.String(), nil
+		return nil
 	}
 
-	return e.evalNodes(partial.ast.nodes)
+	return e.evalNodes(w, partial.ast.nodes)
 }
 
 func (e *evaluator) loadPartial(name string) (*Template, error) {
@@ -358,12 +367,13 @@ func (e *evaluator) evalNamedArgs(args []NamedArg) (map[string]any, error) {
 }
 
 // renderPartialIsolated runs the partial with its own evaluator (no shared
-// scope, fresh registers). The renderConfig is shared by pointer so the
-// partial sees the same loader and strict-mode flags; the depth counter
-// is inherited and incremented so the recursion cap still applies.
-func (e *evaluator) renderPartialIsolated(partial *Template, data map[string]any) (string, error) {
+// scope, fresh registers) and writes the result to w. The renderConfig is
+// shared by pointer so the partial sees the same loader and strict-mode
+// flags; the depth counter is inherited and incremented so the recursion
+// cap still applies.
+func (e *evaluator) renderPartialIsolated(w io.Writer, partial *Template, data map[string]any) error {
 	if e.partialDepth >= maxPartialDepth {
-		return "", fmt.Errorf("partial depth exceeded %d (possible cycle)", maxPartialDepth)
+		return fmt.Errorf("partial depth exceeded %d (possible cycle)", maxPartialDepth)
 	}
 	sub := &evaluator{
 		cfg:          e.cfg,
@@ -372,82 +382,82 @@ func (e *evaluator) renderPartialIsolated(partial *Template, data map[string]any
 		templateName: partial.name,
 		partialDepth: e.partialDepth + 1,
 	}
-	return sub.evaluate(partial.ast)
+	return sub.evaluate(w, partial.ast)
 }
 
-func (e *evaluator) evalIfTag(tag *IfTag) (string, error) {
+func (e *evaluator) evalIfTag(w io.Writer, tag *IfTag) error {
 	cond, err := e.evalExpr(tag.Condition)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	if toBool(cond) {
-		return e.evalNodes(tag.ThenBranch)
+		return e.evalNodes(w, tag.ThenBranch)
 	}
 
 	for _, elsif := range tag.ElsifBranches {
 		cond, err := e.evalExpr(elsif.Condition)
 		if err != nil {
-			return "", err
+			return err
 		}
 		if toBool(cond) {
-			return e.evalNodes(elsif.Body)
+			return e.evalNodes(w, elsif.Body)
 		}
 	}
 
 	if tag.ElseBranch != nil {
-		return e.evalNodes(tag.ElseBranch)
+		return e.evalNodes(w, tag.ElseBranch)
 	}
 
-	return "", nil
+	return nil
 }
 
-func (e *evaluator) evalUnlessTag(tag *UnlessTag) (string, error) {
+func (e *evaluator) evalUnlessTag(w io.Writer, tag *UnlessTag) error {
 	cond, err := e.evalExpr(tag.Condition)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	if !toBool(cond) {
-		return e.evalNodes(tag.Body)
+		return e.evalNodes(w, tag.Body)
 	}
 
 	if tag.ElseBranch != nil {
-		return e.evalNodes(tag.ElseBranch)
+		return e.evalNodes(w, tag.ElseBranch)
 	}
 
-	return "", nil
+	return nil
 }
 
-func (e *evaluator) evalCaseTag(tag *CaseTag) (string, error) {
+func (e *evaluator) evalCaseTag(w io.Writer, tag *CaseTag) error {
 	value, err := e.evalExpr(tag.Value)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	for _, when := range tag.Whens {
 		for _, whenVal := range when.Values {
 			v, err := e.evalExpr(whenVal)
 			if err != nil {
-				return "", err
+				return err
 			}
 			if equal(value, v) {
-				return e.evalNodes(when.Body)
+				return e.evalNodes(w, when.Body)
 			}
 		}
 	}
 
 	if tag.Else != nil {
-		return e.evalNodes(tag.Else)
+		return e.evalNodes(w, tag.Else)
 	}
 
-	return "", nil
+	return nil
 }
 
-func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
+func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 	collection, err := e.evalExpr(tag.Collection)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	// Handle range expression. The slice is materialized eagerly so that
@@ -456,11 +466,11 @@ func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
 	if rangeExpr, ok := tag.Collection.(*RangeExpr); ok {
 		startVal, err := e.evalExpr(rangeExpr.Start)
 		if err != nil {
-			return "", err
+			return err
 		}
 		endVal, err := e.evalExpr(rangeExpr.End)
 		if err != nil {
-			return "", err
+			return err
 		}
 		start := int(toInt(toNumber(startVal)))
 		end := int(toInt(toNumber(endVal)))
@@ -470,7 +480,7 @@ func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
 			size = -size
 		}
 		if size+1 > maxRangeSize {
-			return "", fmt.Errorf("for range size %d exceeds limit %d", size+1, maxRangeSize)
+			return fmt.Errorf("for range size %d exceeds limit %d", size+1, maxRangeSize)
 		}
 
 		items := make([]any, 0, size+1)
@@ -496,16 +506,16 @@ func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
 	}
 	if len(items) == 0 {
 		if tag.ElseBody != nil {
-			return e.evalNodes(tag.ElseBody)
+			return e.evalNodes(w, tag.ElseBody)
 		}
-		return "", nil
+		return nil
 	}
 
 	// Apply offset
 	if tag.Offset != nil {
 		offset, err := e.evalExpr(tag.Offset)
 		if err != nil {
-			return "", err
+			return err
 		}
 		off := int(toInt(toNumber(offset)))
 		if off > 0 && off < len(items) {
@@ -519,7 +529,7 @@ func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
 	if tag.Limit != nil {
 		limit, err := e.evalExpr(tag.Limit)
 		if err != nil {
-			return "", err
+			return err
 		}
 		lim := int(toInt(toNumber(limit)))
 		if lim > 0 && lim < len(items) {
@@ -538,9 +548,9 @@ func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
 
 	if len(items) == 0 {
 		if tag.ElseBody != nil {
-			return e.evalNodes(tag.ElseBody)
+			return e.evalNodes(w, tag.ElseBody)
 		}
-		return "", nil
+		return nil
 	}
 
 	// Capture the enclosing forloop (if any) BEFORE pushing a new scope so
@@ -553,14 +563,18 @@ func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
 	e.ctx = e.ctx.push()
 	defer func() { e.ctx = e.ctx.parent }()
 
-	var sb strings.Builder
 	length := len(items)
 
 	for i, item := range items {
 		e.ctx.set(tag.Variable, item)
 		e.ctx.set("forloop", newForloop(i, length, loopName, parent))
 
-		result, err := e.evalNodes(tag.Body)
+		// Body output streams directly to w as it goes. {% break %} and
+		// {% continue %} do not unwind output already written this
+		// iteration — matching the pre-Writer behavior, where evalNodes
+		// returned (partial-output, errBreak) and the caller appended
+		// the partial output before breaking.
+		err := e.evalNodes(w, tag.Body)
 		if errors.Is(err, errBreak) {
 			break
 		}
@@ -568,12 +582,11 @@ func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
 			continue
 		}
 		if err != nil {
-			return "", err
+			return err
 		}
-		sb.WriteString(result)
 	}
 
-	return sb.String(), nil
+	return nil
 }
 
 func (e *evaluator) evalExpr(expr Expression) (any, error) {
@@ -1033,7 +1046,7 @@ func isNumeric(v any) bool {
 	return false
 }
 
-func (e *evaluator) evalCycleTag(tag *CycleTag) (string, error) {
+func (e *evaluator) evalCycleTag(w io.Writer, tag *CycleTag) error {
 	// Generate a unique key for this cycle
 	// Use the group name if provided, otherwise create one from values
 	key := tag.GroupName
@@ -1043,7 +1056,7 @@ func (e *evaluator) evalCycleTag(tag *CycleTag) (string, error) {
 		for _, v := range tag.Values {
 			val, err := e.evalExpr(v)
 			if err != nil {
-				return "", err
+				return err
 			}
 			parts = append(parts, toString(val))
 		}
@@ -1057,50 +1070,52 @@ func (e *evaluator) evalCycleTag(tag *CycleTag) (string, error) {
 	idx := pos % len(tag.Values)
 	val, err := e.evalExpr(tag.Values[idx])
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	// Increment counter for next call
 	e.regs.cycle[key] = pos + 1
 
-	return toString(val), nil
+	_, err = io.WriteString(w, toString(val))
+	return err
 }
 
-func (e *evaluator) evalIncrementTag(tag *IncrementTag) (string, error) {
+func (e *evaluator) evalIncrementTag(w io.Writer, tag *IncrementTag) error {
 	// Increment outputs the current value, then increments
 	val := e.regs.counter[tag.Variable]
-	result := toString(val)
 	e.regs.counter[tag.Variable] = val + 1
-	return result, nil
+	_, err := io.WriteString(w, toString(val))
+	return err
 }
 
-func (e *evaluator) evalDecrementTag(tag *DecrementTag) (string, error) {
+func (e *evaluator) evalDecrementTag(w io.Writer, tag *DecrementTag) error {
 	// Decrement decrements first, then outputs the value
 	e.regs.counter[tag.Variable]--
 	val := e.regs.counter[tag.Variable]
-	return toString(val), nil
+	_, err := io.WriteString(w, toString(val))
+	return err
 }
 
 // evalTablerowTag emits HTML <tr>/<td> markup over a collection. Output
 // matches Shopify's exactly: `<tr class="row1">\n` opens, each item is
 // wrapped in `<td class="colN">…</td>`, every `cols` items closes the
 // current row and opens the next, and the final `</tr>\n` closes.
-func (e *evaluator) evalTablerowTag(tag *TablerowTag) (string, error) {
+func (e *evaluator) evalTablerowTag(w io.Writer, tag *TablerowTag) error {
 	collection, err := e.evalExpr(tag.Collection)
 	if err != nil {
-		return "", err
+		return err
 	}
 	// Shopify short-circuits to "" when the collection itself is nil,
 	// only emitting <tr>…</tr> markup for actual (possibly empty) arrays.
 	if collection == nil {
-		return "", nil
+		return nil
 	}
 	items := toSlice(collection)
 
 	if tag.Offset != nil {
 		off, err := e.evalExpr(tag.Offset)
 		if err != nil {
-			return "", err
+			return err
 		}
 		n := int(toInt(toNumber(off)))
 		if n > 0 && n < len(items) {
@@ -1112,7 +1127,7 @@ func (e *evaluator) evalTablerowTag(tag *TablerowTag) (string, error) {
 	if tag.Limit != nil {
 		lim, err := e.evalExpr(tag.Limit)
 		if err != nil {
-			return "", err
+			return err
 		}
 		n := int(toInt(toNumber(lim)))
 		if n >= 0 && n < len(items) {
@@ -1124,7 +1139,7 @@ func (e *evaluator) evalTablerowTag(tag *TablerowTag) (string, error) {
 	if tag.Cols != nil {
 		v, err := e.evalExpr(tag.Cols)
 		if err != nil {
-			return "", err
+			return err
 		}
 		if n := int(toInt(toNumber(v))); n > 0 {
 			cols = n
@@ -1132,15 +1147,23 @@ func (e *evaluator) evalTablerowTag(tag *TablerowTag) (string, error) {
 	}
 	if cols == 0 {
 		// Match Shopify: empty collection still emits a single empty row.
-		return "<tr class=\"row1\">\n</tr>\n", nil
+		_, err := io.WriteString(w, "<tr class=\"row1\">\n</tr>\n")
+		return err
 	}
 
 	e.ctx = e.ctx.push()
 	defer func() { e.ctx = e.ctx.parent }()
 
-	var sb strings.Builder
-	sb.WriteString("<tr class=\"row1\">\n")
+	if _, err := io.WriteString(w, "<tr class=\"row1\">\n"); err != nil {
+		return err
+	}
 	length := len(items)
+	// Per-cell scratch buffer: tablerow wraps each cell in <td>...</td>,
+	// and break/continue inside the body must still emit the partial cell
+	// with its closing tag — easier to evaluate body to scratch and then
+	// emit the wrapped cell than to insert the closing tag from the
+	// outside if break/continue fired mid-stream.
+	var cell strings.Builder
 	for i, item := range items {
 		col := i%cols + 1
 		row := i/cols + 1
@@ -1164,33 +1187,33 @@ func (e *evaluator) evalTablerowTag(tag *TablerowTag) (string, error) {
 			"col_last":  colLast,
 		})
 
-		fmt.Fprintf(&sb, "<td class=\"col%d\">", col)
-		body, err := e.evalNodes(tag.Body)
-		if errors.Is(err, errBreak) {
-			sb.WriteString(body)
-			sb.WriteString("</td>")
+		cell.Reset()
+		bodyErr := e.evalNodes(&cell, tag.Body)
+		fmt.Fprintf(w, "<td class=\"col%d\">", col)
+		if _, err := io.WriteString(w, cell.String()); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, "</td>"); err != nil {
+			return err
+		}
+		if errors.Is(bodyErr, errBreak) {
 			break
 		}
-		if errors.Is(err, errContinue) {
-			sb.WriteString(body)
-			sb.WriteString("</td>")
+		if errors.Is(bodyErr, errContinue) {
 			if colLast && !isLast {
-				fmt.Fprintf(&sb, "</tr>\n<tr class=\"row%d\">", row+1)
+				fmt.Fprintf(w, "</tr>\n<tr class=\"row%d\">", row+1)
 			}
 			continue
 		}
-		if err != nil {
-			return "", err
+		if bodyErr != nil {
+			return bodyErr
 		}
-		sb.WriteString(body)
-		sb.WriteString("</td>")
-
 		if colLast && !isLast {
-			fmt.Fprintf(&sb, "</tr>\n<tr class=\"row%d\">", row+1)
+			fmt.Fprintf(w, "</tr>\n<tr class=\"row%d\">", row+1)
 		}
 	}
-	sb.WriteString("</tr>\n")
-	return sb.String(), nil
+	_, err = io.WriteString(w, "</tr>\n")
+	return err
 }
 
 // evalIfchangedTag emits the body only when its rendering differs from
@@ -1198,17 +1221,20 @@ func (e *evaluator) evalTablerowTag(tag *TablerowTag) (string, error) {
 // render — every {% ifchanged %} block in the template compares against
 // the same slot, so two distinct blocks emitting the same value will see
 // the second suppressed. This matches Shopify's context.registers[:ifchanged].
-func (e *evaluator) evalIfchangedTag(tag *IfchangedTag) (string, error) {
-	out, err := e.evalNodes(tag.Body)
+func (e *evaluator) evalIfchangedTag(w io.Writer, tag *IfchangedTag) error {
+	// Body must be evaluated to a scratch buffer first so we can compare
+	// it against the last emission before deciding whether to write it.
+	out, err := e.evalNodeToString(tag.Body)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if e.regs.ifchangedSet && e.regs.ifchangedLast == out {
-		return "", nil
+		return nil
 	}
 	e.regs.ifchangedLast = out
 	e.regs.ifchangedSet = true
-	return out, nil
+	_, err = io.WriteString(w, out)
+	return err
 }
 
 // Control flow errors for break/continue.

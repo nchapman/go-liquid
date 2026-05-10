@@ -41,6 +41,7 @@ package liquid
 import (
 	"io"
 	"reflect"
+	"strings"
 	"sync/atomic"
 )
 
@@ -124,17 +125,26 @@ func (t *Template) Render(data any, opts ...RenderOption) (string, error) {
 	eval.cfg.strictVariables = o.strictVariables
 	eval.cfg.strictFilters = o.strictFilters
 	eval.templateName = t.name
-	return eval.evaluate(t.ast)
+	var sb strings.Builder
+	if err := eval.evaluate(&sb, t.ast); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
 }
 
-// RenderTo executes the template against data and writes the result to w.
+// RenderTo executes the template against data and streams the result to
+// w as it is produced — no full-template buffer is built.
 func (t *Template) RenderTo(w io.Writer, data any, opts ...RenderOption) error {
-	out, err := t.Render(data, opts...)
-	if err != nil {
-		return err
+	var o renderOpts
+	for _, opt := range opts {
+		opt(&o)
 	}
-	_, err = io.WriteString(w, out)
-	return err
+	eval := newEvaluator(toStringMap(data))
+	eval.cfg.partials = t.partials.Load()
+	eval.cfg.strictVariables = o.strictVariables
+	eval.cfg.strictFilters = o.strictFilters
+	eval.templateName = t.name
+	return eval.evaluate(w, t.ast)
 }
 
 // Render parses and executes a template in one call. For templates rendered

@@ -47,6 +47,45 @@ func TestControlFlowErrorsArePreservedThroughWrapping(t *testing.T) {
 	}
 }
 
+// TestPartialOutputBeforeBreakIsPreserved locks down the (Shopify-correct)
+// behavior that anything written to the iteration's body before a
+// {% break %} or {% continue %} fires is kept in the rendered output.
+// The pre-Writer evaluator discarded such partial output because the
+// inner evalNodes returned ("", errBreak) instead of the bytes it had
+// written; this test prevents a regression back to that shape.
+func TestPartialOutputBeforeBreakIsPreserved(t *testing.T) {
+	cases := []struct {
+		name, tmpl, want string
+	}{
+		{
+			"break after output in for",
+			`{% for n in items %}{{ n }}{% if n == 3 %}{% break %}{% endif %}{% endfor %}`,
+			"123",
+		},
+		{
+			"continue after output in for",
+			`{% for n in items %}[{{ n }}{% if n == 3 %}{% continue %}{% endif %}]{% endfor %}`,
+			"[1][2][3[4][5]",
+		},
+		{
+			"continue after output in tablerow",
+			`{% tablerow n in items cols: 2 %}{{ n }}{% if n == 2 %}{% continue %}{% endif %}!{% endtablerow %}`,
+			"<tr class=\"row1\">\n<td class=\"col1\">1!</td><td class=\"col2\">2</td></tr>\n<tr class=\"row2\"><td class=\"col1\">3!</td><td class=\"col2\">4!</td></tr>\n<tr class=\"row3\"><td class=\"col1\">5!</td></tr>\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Render(tc.tmpl, map[string]any{"items": []any{1, 2, 3, 4, 5}})
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q\nwant %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // methodSurfaceModel exercises callTemplateMethod's signature filter: only
 // (T) and (T, error) shapes are auto-invoked; bare error and multi-value
 // returns are skipped. The contract is documented at the package level;

@@ -6,8 +6,8 @@ score=[0] missing=[n/a]
 === CATEGORIES (for + if + tablerow + cycle + increment + ifchanged + parentloop) ===
 --- Fruit ---
 <tr class="row1">
-<td class="col1">[odd] apple $1.5 (r1c1 of cat#1) 0</td><td class="col2"></td></tr>
-<tr class="row2"><td class="col1"></td><td class="col2">[even] date $3 (r2c2 of cat#1) 1</td></tr>
+<td class="col1">[odd] apple $1.5 (r1c1 of cat#1) 0</td><td class="col2"><oos banana></td></tr>
+<tr class="row2"><td class="col1"><skip cherry></td><td class="col2">[even] date $3 (r2c2 of cat#1) 1</td></tr>
 
 --- Veg ---
 <tr class="row1">
