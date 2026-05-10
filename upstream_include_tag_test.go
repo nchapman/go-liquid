@@ -300,23 +300,42 @@ func TestUpstreamIncludeTag(t *testing.T) {
 		}
 	})
 
+	check := func(t *testing.T, src string, want bool) {
+		t.Helper()
+		tmpl, err := Parse(src)
+		if err != nil {
+			t.Fatalf("parse %q: %v", src, err)
+		}
+		nodes := tmpl.RootNodes()
+		if len(nodes) == 0 {
+			t.Fatalf("no nodes parsed from %q", src)
+		}
+		inc, ok := nodes[0].(*IncludeTag)
+		if !ok {
+			t.Fatalf("first node is %T, want *IncludeTag", nodes[0])
+		}
+		if got := inc.IsForLoop(); got != want {
+			t.Errorf("%q: IsForLoop()=%v want %v", src, got, want)
+		}
+	}
+
 	t.Run("test_include_for_loop_true_with_for_keyword", func(t *testing.T) {
-		t.Skip("TODO: expose for_loop? on the include node (Ruby AST introspection); functional behavior is already covered by test_include_tag_for")
+		check(t, "{% include 'product' for products %}", true)
 	})
 
 	t.Run("test_include_for_loop_false_with_with_keyword", func(t *testing.T) {
-		t.Skip("TODO: expose for_loop? on the include node — see test_include_for_loop_true_with_for_keyword")
+		check(t, "{% include 'product' with product %}", false)
 	})
 
 	t.Run("test_include_for_loop_false_without_keyword", func(t *testing.T) {
-		t.Skip("TODO: expose for_loop? on the include node — see test_include_for_loop_true_with_for_keyword")
+		check(t, "{% include 'header' %}", false)
 	})
 
 	t.Run("test_include_for_loop_with_alias", func(t *testing.T) {
-		t.Skip("TODO: expose for_loop? on the include node — see test_include_for_loop_true_with_for_keyword")
+		check(t, "{% include 'product' for products as item %}", true)
 	})
 
 	t.Run("test_include_with_keyword_and_alias", func(t *testing.T) {
-		t.Skip("TODO: expose for_loop? on the include node — see test_include_for_loop_true_with_for_keyword")
+		check(t, "{% include 'product' with products[0] as item %}", false)
 	})
 }

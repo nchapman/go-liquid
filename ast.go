@@ -441,3 +441,8 @@ func (t *IncludeTag) node() {}
 
 // Pos returns the source line and column of the node.
 func (t *IncludeTag) Pos() (line, column int) { return t.Line, t.Column }
+
+// IsForLoop reports whether the include uses the `for` keyword (iterates
+// the partial once per element of the bound expression). Ruby parity for
+// IncludeTag#for_loop?.
+func (t *IncludeTag) IsForLoop() bool { return t.For != nil }

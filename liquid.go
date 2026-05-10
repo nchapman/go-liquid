@@ -66,6 +66,17 @@ type Template struct {
 // partial Template. Inspect them via the loader if needed.
 func (t *Template) Warnings() []Warning { return t.warnings }
 
+// RootNodes returns the top-level AST nodes of the parsed template. Useful
+// for tests and tooling that need to inspect parse-time properties (Ruby
+// parity for Template#root.nodelist). The returned slice is owned by the
+// template — callers must not mutate it.
+func (t *Template) RootNodes() []Node {
+	if t == nil || t.ast == nil {
+		return nil
+	}
+	return t.ast.nodes
+}
+
 func (t *Template) environment() *Environment {
 	if t.env != nil {
 		return t.env
