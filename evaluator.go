@@ -807,9 +807,12 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		return e.evalBinaryExpr(x)
 
 	case *RangeExpr:
-		// Ranges are evaluated in the context of for loops
-		// Return empty slice here as they're handled specially in evalForTag
-		return []any{}, nil
+		// Materialize the range so it can be compared, output, or used as
+		// a collection in non-for-loop contexts (e.g. {{ (1..3) }},
+		// {% if x == (1..3) %}). For-loops still call materializeRange
+		// directly to avoid the heap allocation when the bounds aren't
+		// needed eagerly.
+		return e.materializeRange(x)
 
 	default:
 		// Unknown expression types return empty string (Liquid semantics)
