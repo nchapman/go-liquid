@@ -480,6 +480,14 @@ func filterSort(input any, args ...any) any {
 	// If a property is specified, sort by that property
 	if len(args) > 0 {
 		prop := toString(args[0])
+		// Ruby reads the property from every element up front (via map),
+		// so to_liquid fires once per element even on degenerate inputs
+		// where SortFunc would otherwise skip the comparator (len <= 1).
+		// getProperty does the liquify internally, so a single read per
+		// element is enough — no separate liquify call.
+		for _, it := range result {
+			_ = getProperty(it, prop)
+		}
 		slices.SortFunc(result, func(a, b any) int {
 			aVal := getProperty(a, prop)
 			bVal := getProperty(b, prop)
@@ -682,12 +690,15 @@ func isArrayLike(v any) bool {
 // through InputIterator in Ruby (first, last, size, slice) keep using
 // toSlice directly.
 //
-// Drops are not iterable here — they fall through to the scalar-wrap branch
-// as `[drop]`, matching Ruby's `Array(hash_like)`. A Drop intended to act as
-// a collection should be exposed as a real slice/map by the host code.
+// A Drop that implements LiquidIterator is expanded via LiquidEach; plain
+// Drops (no iterator) fall through to the scalar-wrap branch as `[drop]`,
+// matching Ruby's `Array(hash_like)`.
 func toFilterInput(v any) []any {
 	if v == nil {
 		return []any{}
+	}
+	if items, ok := liquidIter(v); ok {
+		return items
 	}
 	if s, ok := v.(string); ok {
 		return []any{s}
@@ -729,7 +740,10 @@ func filterSum(input any, args ...any) any {
 			prop := toString(args[0])
 			val = getProperty(item, prop)
 		} else {
-			val = item
+			// to_liquid fires per-element when there's no property descent
+			// to do it for us. Matches Ruby's input.map(&:to_liquid) before
+			// summing.
+			val = liquify(item)
 		}
 
 		num := toNumber(val)
@@ -749,6 +763,8 @@ func filterSum(input any, args ...any) any {
 
 // compareValues compares two values for sorting
 func compareValues(a, b any) int {
+	a = liquidScalar(a)
+	b = liquidScalar(b)
 	// Nil sorts last (matches Ruby's nil_safe_compare in standardfilters.rb).
 	switch {
 	case a == nil && b == nil:
@@ -768,6 +784,8 @@ func compareValues(a, b any) int {
 
 // equalValues checks if two values are equal
 func equalValues(a, b any) bool {
+	a = liquidScalar(a)
+	b = liquidScalar(b)
 	// Handle boolean comparisons
 	if bBool, ok := b.(bool); ok {
 		if bBool {
@@ -1282,6 +1300,16 @@ func toString(v any) string {
 	if v == nil {
 		return ""
 	}
+	// to_liquid: convert domain objects to their Liquid representation
+	// before stringifying. A type that wraps a primitive in a ToLiquid
+	// method (e.g. customToLiquidDrop) renders as that primitive's string.
+	// IntegerDrop/BooleanDrop don't implement ToLiquidConverter, so this
+	// is a no-op for them — they fall through to the Stringer branch
+	// below, matching Ruby's `to_s` precedence.
+	v = liquify(v)
+	if v == nil {
+		return ""
+	}
 	switch val := v.(type) {
 	case emptyValue, blankValue:
 		// `empty` / `blank` literals render as "" (matches upstream).
@@ -1323,6 +1351,10 @@ func toString(v any) string {
 		return rubyHashToS(val)
 	case fmt.Stringer:
 		return val.String()
+	case LiquidValuer:
+		// No String() override — fall back to the scalar so the Drop at
+		// least renders as its underlying value rather than a pointer.
+		return toString(val.ToLiquidValue())
 	default:
 		rv := reflect.ValueOf(val)
 		if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
@@ -1429,6 +1461,9 @@ func toSlice(v any) []any {
 	if v == nil {
 		return nil
 	}
+	if items, ok := liquidIter(v); ok {
+		return items
+	}
 	switch val := v.(type) {
 	case []any:
 		return val
@@ -1469,6 +1504,10 @@ func toSlice(v any) []any {
 
 // toNumber converts any value to a number (int64 or float64).
 func toNumber(v any) any {
+	if v == nil {
+		return int64(0)
+	}
+	v = liquidScalar(v)
 	if v == nil {
 		return int64(0)
 	}
@@ -1537,6 +1576,10 @@ func toBool(v any) bool {
 // conditions they're sentinel objects, hence truthy.) See Shopify's
 // condition.rb interpret_condition.
 func isFalsy(v any) bool {
+	if v == nil {
+		return true
+	}
+	v = liquidScalar(v)
 	if v == nil {
 		return true
 	}

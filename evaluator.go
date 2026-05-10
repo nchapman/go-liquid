@@ -1067,17 +1067,32 @@ func getProperty(obj any, prop string) any {
 // present on any value that toSlice/filterSize can handle. Struct method
 // dispatch is also considered present when a matching method is invoked.
 func getPropertyOK(obj any, prop string, ctx RenderContext) (any, bool) {
+	v, present := getPropertyOKRaw(obj, prop, ctx)
+	if !present {
+		return v, false
+	}
+	// to_liquid: a domain object opts into being represented by a different
+	// value at every property access. Run liquify on the result so nested
+	// values exposed by Drops or maps/structs are converted too.
+	return liquify(v), true
+}
+
+func getPropertyOKRaw(obj any, prop string, ctx RenderContext) (any, bool) {
 	if obj == nil {
 		return nil, false
 	}
+
+	// Liquify the receiver too, so a non-Drop domain object that opts into
+	// a Drop representation (via to_liquid) is descended via its Drop
+	// surface and not its Go-side fields/methods.
+	obj = liquify(obj)
 
 	// Drop opts the type into custom property resolution (Shopify Liquid's
 	// Drop equivalent). When implemented, methods on the underlying type
 	// are NOT auto-dispatched — the Drop is the sole source of truth.
 	if d, ok := obj.(Drop); ok {
 		setDropContext(d, ctx)
-		v, present := d.LiquidLookup(prop)
-		return v, present
+		return d.LiquidLookup(prop)
 	}
 
 	if m, ok := obj.(map[string]any); ok {
@@ -1153,6 +1168,7 @@ func getIndexOK(obj, idx any, ctx RenderContext) (any, bool) {
 	if obj == nil {
 		return nil, false
 	}
+	obj = liquify(obj)
 	if s, ok := idx.(string); ok {
 		// Ruby semantics: bracket notation with a string key is hash lookup
 		// only — `arr["first"]` does NOT resolve `.first` as a property.
@@ -1259,6 +1275,10 @@ func equal(a, b any) bool {
 		return isBlank(a)
 	}
 
+	// to_liquid_value: unwrap Drops so IntegerDrop(5) == 5 works.
+	a = liquidScalar(a)
+	b = liquidScalar(b)
+
 	// Handle nil
 	if a == nil && b == nil {
 		return true
@@ -1287,6 +1307,10 @@ func equal(a, b any) bool {
 
 // compare compares two values, returning -1, 0, or 1.
 func compare(a, b any) int {
+	// to_liquid_value: unwrap Drops so `IntegerDrop(0) < foo` and friends
+	// run their relational test against the scalar value.
+	a = liquidScalar(a)
+	b = liquidScalar(b)
 	if a == nil && b == nil {
 		return 0
 	}

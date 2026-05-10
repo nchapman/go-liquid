@@ -10,24 +10,59 @@ func TestUpstream_Variable_SimpleVariable(t *testing.T) {
 }
 
 func TestUpstream_Variable_RenderCallsToLiquid(t *testing.T) {
-	t.Skip("requires Liquid::Drop to_liquid hook (ThingWithToLiquid)")
-	renderEq(t, "to_liquid", "{{ foo }}", nil, "foobar")
+	renderEq(t, "to_liquid", "{{ foo }}",
+		map[string]any{"foo": thingWithToLiquid{}}, "foobar")
 }
 
 func TestUpstream_Variable_LookupCallsToLiquidValue(t *testing.T) {
-	t.Skip("requires IntegerDrop/BooleanDrop with to_liquid_value")
+	renderEq(t, "int-drop",
+		"{{ foo }}",
+		map[string]any{"foo": &integerDrop{v: 1}}, "1")
+	renderEq(t, "int-index",
+		"{{ list[foo] }}",
+		map[string]any{"foo": &integerDrop{v: 1}, "list": []any{1, 2, 3}}, "2")
+	renderEq(t, "bool-drop",
+		"{{ foo }}",
+		map[string]any{"foo": &booleanDrop{v: true}}, "Yay")
+	renderEq(t, "bool-filtered",
+		"{{ foo | upcase }}",
+		map[string]any{"foo": &booleanDrop{v: true}}, "YAY")
 }
 
 func TestUpstream_Variable_IfTagCallsToLiquidValue(t *testing.T) {
-	t.Skip("requires IntegerDrop/BooleanDrop with to_liquid_value")
+	renderEq(t, "int-eq-literal",
+		"{% if foo == 1 %}one{% endif %}",
+		map[string]any{"foo": &integerDrop{v: 1}}, "one")
+	renderEq(t, "int-eq-drop",
+		"{% if foo == eqv %}one{% endif %}",
+		map[string]any{"foo": &integerDrop{v: 1}, "eqv": &integerDrop{v: 1}}, "one")
+	renderEq(t, "int-lt",
+		"{% if 0 < foo %}one{% endif %}",
+		map[string]any{"foo": &integerDrop{v: 1}}, "one")
+	renderEq(t, "int-gt",
+		"{% if foo > 0 %}one{% endif %}",
+		map[string]any{"foo": &integerDrop{v: 1}}, "one")
+	renderEq(t, "drop-gt-drop",
+		"{% if b > a %}one{% endif %}",
+		map[string]any{"a": &integerDrop{v: 0}, "b": &integerDrop{v: 1}}, "one")
+	renderEq(t, "bool-eq-true",
+		"{% if foo == true %}true{% endif %}",
+		map[string]any{"foo": &booleanDrop{v: true}}, "true")
 }
 
 func TestUpstream_Variable_UnlessTagCallsToLiquidValue(t *testing.T) {
-	t.Skip("requires BooleanDrop with to_liquid_value")
+	renderEq(t, "true-suppressed",
+		"{% unless foo %}true{% endunless %}",
+		map[string]any{"foo": &booleanDrop{v: true}}, "")
+	renderEq(t, "false-emits",
+		"{% unless foo %}true{% endunless %}",
+		map[string]any{"foo": &booleanDrop{v: false}}, "true")
 }
 
 func TestUpstream_Variable_CaseTagCallsToLiquidValue(t *testing.T) {
-	t.Skip("requires IntegerDrop with to_liquid_value")
+	renderEq(t, "case-drop-1",
+		"{% case foo %}{% when 1 %}One{% endcase %}",
+		map[string]any{"foo": &integerDrop{v: 1}}, "One")
 }
 
 func TestUpstream_Variable_SimpleWithWhitespaces(t *testing.T) {
@@ -147,11 +182,27 @@ func TestUpstream_Variable_RawValueVariable(t *testing.T) {
 }
 
 func TestUpstream_Variable_DynamicFindVarWithDrop(t *testing.T) {
-	t.Skip("requires SettingsDrop (Liquid::Drop with custom accessor)")
+	renderEq(t, "drop-index-scalar", "{{ self[list[settings.zero]] }}",
+		map[string]any{
+			"list":     []any{"foo"},
+			"settings": &settingsDrop{m: map[string]any{"zero": 0}},
+			"foo":      "bar",
+		}, "bar")
+	renderEq(t, "drop-index-nested", "{{ self[list[settings.zero][\"foo\"]] }}",
+		map[string]any{
+			"list":     []any{map[string]any{"foo": "bar"}},
+			"settings": &settingsDrop{m: map[string]any{"zero": 0}},
+			"bar":      "foo",
+		}, "foo")
 }
 
 func TestUpstream_Variable_DoubleNestedVariableLookup(t *testing.T) {
-	t.Skip("requires SettingsDrop (Liquid::Drop with custom accessor)")
+	renderEq(t, "double-nested", `{{ list[list[settings.zero]]["foo"] }}`,
+		map[string]any{
+			"list":     []any{1, map[string]any{"foo": "bar"}},
+			"settings": &settingsDrop{m: map[string]any{"zero": 0}},
+			"bar":      "foo",
+		}, "bar")
 }
 
 func TestUpstream_Variable_LookupShouldNotHangWithInvalidSyntax(t *testing.T) {

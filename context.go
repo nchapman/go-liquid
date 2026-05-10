@@ -49,7 +49,7 @@ func (c *context) get(name string) any {
 func (c *context) lookup(name string) (any, bool) {
 	if c.vars != nil {
 		if val, ok := c.vars[name]; ok {
-			return val, true
+			return liquify(val), true
 		}
 	}
 	if c.parent != nil {

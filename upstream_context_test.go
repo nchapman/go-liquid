@@ -185,17 +185,41 @@ func TestUpstream_Context_FirstCanAppearInMiddleOfCallchain(t *testing.T) {
 	renderEq(t, "last", "{{ product.variants.last.title }}", d, "element151cm")
 }
 
-// Drop / proc / lambda tests — all skipped (no go-liquid equivalent).
-func TestUpstream_Context_Cents(t *testing.T)                     { t.Skip("requires Liquid::Drop to_liquid") }
-func TestUpstream_Context_NestedCents(t *testing.T)               { t.Skip("requires Liquid::Drop to_liquid") }
-func TestUpstream_Context_CentsThroughDrop(t *testing.T)          { t.Skip("requires Liquid::Drop") }
-func TestUpstream_Context_NestedCentsThroughDrop(t *testing.T)    { t.Skip("requires Liquid::Drop") }
-func TestUpstream_Context_DropMethodsWithQuestionMarks(t *testing.T) {
-	t.Skip("Ruby Drop#non_zero? not modeled; '?' not a valid identifier char in go-liquid")
+func TestUpstream_Context_Cents(t *testing.T) {
+	renderEq(t, "cents", "{{ cents }}",
+		map[string]any{"cents": hundredCentes{}}, "100")
 }
-func TestUpstream_Context_ContextFromWithinDrop(t *testing.T)        { t.Skip("requires Liquid::Drop") }
-func TestUpstream_Context_NestedContextFromWithinDrop(t *testing.T)  { t.Skip("requires Liquid::Drop") }
-func TestUpstream_Context_CentsThroughDropNestedly(t *testing.T)     { t.Skip("requires Liquid::Drop") }
+func TestUpstream_Context_NestedCents(t *testing.T) {
+	renderEq(t, "nested-1", "{{ cents.amount }}",
+		map[string]any{"cents": map[string]any{"amount": hundredCentes{}}}, "100")
+	renderEq(t, "nested-2", "{{ cents.cents.amount }}",
+		map[string]any{"cents": map[string]any{"cents": map[string]any{"amount": hundredCentes{}}}}, "100")
+}
+func TestUpstream_Context_CentsThroughDrop(t *testing.T) {
+	renderEq(t, "through-drop", "{{ cents.amount }}",
+		map[string]any{"cents": centsDrop{}}, "100")
+}
+func TestUpstream_Context_NestedCentsThroughDrop(t *testing.T) {
+	renderEq(t, "nested-drop", "{{ vars.cents.amount }}",
+		map[string]any{"vars": map[string]any{"cents": centsDrop{}}}, "100")
+}
+func TestUpstream_Context_DropMethodsWithQuestionMarks(t *testing.T) {
+	t.Skip("Ruby Drop#non_zero? not modeled; '?' as identifier suffix is handled but no method-call syntax")
+}
+func TestUpstream_Context_ContextFromWithinDrop(t *testing.T) {
+	renderEq(t, "ctx-from-drop", "{{ vars.test }}",
+		map[string]any{"test": "123", "vars": &contextSensitiveDrop{}}, "123")
+}
+func TestUpstream_Context_NestedContextFromWithinDrop(t *testing.T) {
+	renderEq(t, "nested-ctx-from-drop", "{{ vars.local.test }}",
+		map[string]any{"test": "123", "vars": map[string]any{"local": &contextSensitiveDrop{}}}, "123")
+}
+func TestUpstream_Context_CentsThroughDropNestedly(t *testing.T) {
+	renderEq(t, "nested-cents-1", "{{ cents.cents.amount }}",
+		map[string]any{"cents": map[string]any{"cents": centsDrop{}}}, "100")
+	renderEq(t, "nested-cents-2", "{{ cents.cents.cents.amount }}",
+		map[string]any{"cents": map[string]any{"cents": map[string]any{"cents": centsDrop{}}}}, "100")
+}
 func TestUpstream_Context_DropWithVariableCalledOnlyOnce(t *testing.T) {
 	t.Skip("requires CounterDrop (Liquid::Drop with @count state)")
 }

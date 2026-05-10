@@ -240,10 +240,11 @@ func TestUpstream_StdFilter_Join(t *testing.T) {
 }
 
 func TestUpstream_StdFilter_JoinCallsToLiquidOnEachElement(t *testing.T) {
-	t.Skip("go-liquid has no Liquid::Drop / to_liquid hook; CustomToLiquidDrop equivalent not modeled")
-	// Ruby:
-	//   assert_equal('i did it, i did it',
-	//     @filters.join([CustomToLiquidDrop.new('i did it'), CustomToLiquidDrop.new('i did it')], ", "))
+	wantStd(t, `{{ foo | join: ", " }}`,
+		map[string]any{"foo": []any{
+			&customToLiquidDrop{v: "i did it"},
+			&customToLiquidDrop{v: "i did it"},
+		}}, "i did it, i did it")
 }
 
 // ----- Sort -----
@@ -811,9 +812,8 @@ func TestUpstream_StdFilter_Date_EmptyFormatReturnsISO(t *testing.T) {
 // ----- Sort/map tests that require Drop/proc support are skipped (bodies retained) -----
 
 func TestUpstream_StdFilter_MapCallsToLiquid(t *testing.T) {
-	t.Skip("requires Liquid::Drop / to_liquid hook")
-	// '{{ foo | map: "whatever" }}' with TestThing element should yield "woot: 1"
-	wantStd(t, `{{ foo | map: "whatever" }}`, map[string]any{"foo": []any{}}, "woot: 1")
+	wantStd(t, `{{ foo | map: "whatever" }}`,
+		map[string]any{"foo": []any{&testThing{}}}, "woot: 1")
 }
 
 func TestUpstream_StdFilter_MapCallsContextEq(t *testing.T) {
@@ -825,7 +825,17 @@ func TestUpstream_StdFilter_MapCallsContextEq(t *testing.T) {
 }
 
 func TestUpstream_StdFilter_SortCallsToLiquid(t *testing.T) {
-	t.Skip("requires Liquid::Drop to_liquid hook")
+	thing := &testThing{}
+	_, err := Render(`{{ foo | sort: "whatever" }}`, map[string]any{"foo": []any{thing}})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	// Matches Ruby's assertion: ToLiquid fired at least once. Output rendering
+	// of the result array also liquifies each element, so the counter may be
+	// higher than 1 — exact count is not part of the contract.
+	if thing.foo == 0 {
+		t.Error("expected ToLiquid to have been called")
+	}
 }
 
 func TestUpstream_StdFilter_MapOverProc(t *testing.T) {
@@ -839,8 +849,8 @@ func TestUpstream_StdFilter_MapOverDropsReturningProcs(t *testing.T) {
 }
 
 func TestUpstream_StdFilter_MapWorksOnEnumerables(t *testing.T) {
-	t.Skip("TestEnumerable / Liquid::Drop semantics not modeled")
-	// '{{ foo | map: "foo" }}' with TestEnumerable => "123"
+	wantStd(t, `{{ foo | map: "foo" }}`,
+		map[string]any{"foo": testEnumerable{}}, "123")
 }
 
 func TestUpstream_StdFilter_MapReturnsEmptyOn2dInputArray(t *testing.T) {
@@ -853,16 +863,20 @@ func TestUpstream_StdFilter_MapReturnsInputWithNoProperty(t *testing.T) {
 }
 
 func TestUpstream_StdFilter_SortWorksOnEnumerables(t *testing.T) {
-	t.Skip("requires TestEnumerable (Liquid::Drop + Enumerable)")
-	// '{{ foo | sort: "bar" | map: "foo" }}' with TestEnumerable => "213"
+	wantStd(t, `{{ foo | sort: "bar" | map: "foo" }}`,
+		map[string]any{"foo": testEnumerable{}}, "213")
 }
 
 func TestUpstream_StdFilter_FirstAndLastCallToLiquid(t *testing.T) {
-	t.Skip("requires Liquid::Drop to_liquid hook")
+	wantStd(t, `{{ foo | first }}`,
+		map[string]any{"foo": []any{thingWithToLiquid{}}}, "foobar")
+	wantStd(t, `{{ foo | last }}`,
+		map[string]any{"foo": []any{thingWithToLiquid{}}}, "foobar")
 }
 
 func TestUpstream_StdFilter_TruncateCallsToLiquid(t *testing.T) {
-	t.Skip("requires Liquid::Drop to_liquid hook")
+	wantStd(t, `{{ foo | truncate: 5 }}`,
+		map[string]any{"foo": &testThing{}}, "wo...")
 }
 
 func TestUpstream_StdFilter_LegacySortHash(t *testing.T) {
@@ -953,11 +967,24 @@ func TestUpstream_StdFilter_SumWithUnindexableValues(t *testing.T) {
 }
 
 func TestUpstream_StdFilter_SumWithoutPropertyCallsToLiquid(t *testing.T) {
-	t.Skip("requires Liquid::Drop to_liquid hook")
+	thing := &testThing{}
+	if _, err := Render(`{{ foo | sum }}`, map[string]any{"foo": []any{thing}}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if thing.foo == 0 {
+		t.Error("expected ToLiquid to have been called")
+	}
 }
 
 func TestUpstream_StdFilter_SumWithPropertyCallsToLiquidOnPropertyValues(t *testing.T) {
-	t.Skip("requires Liquid::Drop to_liquid hook")
+	thing := &testThing{}
+	if _, err := Render(`{{ foo | sum: "quantity" }}`,
+		map[string]any{"foo": []any{map[string]any{"quantity": thing}}}); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if thing.foo == 0 {
+		t.Error("expected ToLiquid to have been called")
+	}
 }
 
 func TestUpstream_StdFilter_SumWithNonStringProperty(t *testing.T) {
