@@ -188,6 +188,9 @@ func filterStrip(input any, args ...any) any {
 }
 
 func filterEscape(input any, args ...any) any {
+	if input == nil {
+		return nil
+	}
 	return html.EscapeString(toString(input))
 }
 
@@ -268,6 +271,9 @@ func filterRemoveFirst(input any, args ...any) any {
 }
 
 func filterTruncate(input any, args ...any) any {
+	if input == nil {
+		return nil
+	}
 	s := toString(input)
 	length := 50
 	ellipsis := "..."

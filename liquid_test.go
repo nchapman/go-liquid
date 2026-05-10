@@ -886,9 +886,14 @@ func TestStringLiterals(t *testing.T) {
 			expected: "hello",
 		},
 		{
-			name:     "escaped characters",
+			// Ruby Liquid does not interpret backslash escapes inside
+			// string literals — the lexer treats content verbatim. A
+			// template `{{ "hello\nworld" }}` therefore renders the
+			// literal eight-char string `hello\nworld` (with a backslash),
+			// not a string containing a newline.
+			name:     "backslash escapes are literal",
 			template: `{{ "hello\nworld" }}`,
-			expected: "hello\nworld",
+			expected: `hello\nworld`,
 		},
 	}
 

@@ -393,9 +393,12 @@ func (l *lexer) scanExpression(line, col int) token {
 	}
 }
 
-// scanString scans a quoted string literal. Strings without escape sequences
-// (the common case) are returned as direct substring slices of the input;
-// only strings containing backslash escapes pay for an unescape pass.
+// scanString scans a quoted string literal. Matching Ruby Liquid's
+// SINGLE_STRING_LITERAL/DOUBLE_STRING_LITERAL regexes, content is taken
+// verbatim — escape sequences (`\n`, `\t`, …) are NOT interpreted by the
+// lexer. The first matching quote of the same kind closes the string;
+// the other quote can appear inside unescaped. Filters that need to
+// interpret escapes do so themselves.
 func (l *lexer) scanString() token {
 	line := l.line
 	col := l.column
@@ -405,47 +408,15 @@ func (l *lexer) scanString() token {
 	startPos := l.pos
 	src := l.input
 
-	// Fast scan: walk to the closing quote or first backslash.
-	for l.ch != 0 && l.ch != quote && l.ch != '\\' {
-		l.readChar()
-	}
-
-	if l.ch == quote {
-		// No escapes — slice the substring directly.
-		literal := src[startPos:l.pos]
-		l.readChar() // closing quote
-		return token{typ: tokenString, literal: literal, line: line, column: col}
-	}
-
-	// Slow path: copy what we have, then process escapes byte by byte.
-	literal := make([]byte, 0, len(src)-startPos)
-	literal = append(literal, src[startPos:l.pos]...)
 	for l.ch != 0 && l.ch != quote {
-		if l.ch == '\\' && l.peekChar() != 0 {
-			l.readChar()
-			switch l.ch {
-			case 'n':
-				literal = append(literal, '\n')
-			case 't':
-				literal = append(literal, '\t')
-			case 'r':
-				literal = append(literal, '\r')
-			case '\\':
-				literal = append(literal, '\\')
-			case '"':
-				literal = append(literal, '"')
-			case '\'':
-				literal = append(literal, '\'')
-			default:
-				literal = append(literal, '\\', l.ch)
-			}
-		} else {
-			literal = append(literal, l.ch)
-		}
 		l.readChar()
 	}
-	l.readChar() // closing quote
-	return token{typ: tokenString, literal: string(literal), line: line, column: col}
+
+	literal := src[startPos:l.pos]
+	if l.ch == quote {
+		l.readChar() // closing quote
+	}
+	return token{typ: tokenString, literal: literal, line: line, column: col}
 }
 
 // scanNumber scans an integer or float literal. Operates directly on input
@@ -468,6 +439,23 @@ func (l *lexer) scanNumber() token {
 		p++ // consume .
 		for p < n && isDigit(src[p]) {
 			p++
+		}
+	}
+
+	// Scientific notation: `e`/`E` optionally followed by sign and digits.
+	// Only consume the exponent if at least one digit follows, otherwise
+	// `5e` would be misread (Ruby would treat the trailing `e` as a name).
+	if p < n && (src[p] == 'e' || src[p] == 'E') {
+		ep := p + 1
+		if ep < n && (src[ep] == '+' || src[ep] == '-') {
+			ep++
+		}
+		if ep < n && isDigit(src[ep]) {
+			isFloat = true
+			p = ep
+			for p < n && isDigit(src[p]) {
+				p++
+			}
 		}
 	}
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strconv"
 	"strings"
 )
 
@@ -980,6 +981,10 @@ func getIndexOK(obj any, idx any) (any, bool) {
 			return string(v[len(v)+i]), true
 		}
 		return nil, false
+	case map[string]any:
+		// Ruby coerces the key for hash lookup so `obj[1]` finds entry "1".
+		// Real-world hit: JSON data with stringified-integer keys.
+		return getPropertyOK(obj, strconv.Itoa(i))
 	default:
 		rv := reflect.ValueOf(obj)
 		if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
@@ -989,6 +994,9 @@ func getIndexOK(obj any, idx any) (any, bool) {
 			if i < 0 && -i <= rv.Len() {
 				return rv.Index(rv.Len() + i).Interface(), true
 			}
+		}
+		if rv.Kind() == reflect.Map {
+			return getPropertyOK(obj, strconv.Itoa(i))
 		}
 	}
 

@@ -63,6 +63,27 @@ func TestShopifyCompat(t *testing.T) {
 		{"date int unix timestamp", `{{ d | date: "%Y-%m-%d" }}`, "2024-03-15", map[string]any{"d": int64(1710504000)}},
 		{"date numeric string timestamp", `{{ d | date: "%Y-%m-%d" }}`, "2024-03-15", map[string]any{"d": "1710504000"}},
 
+		// Scientific notation in number literals (Ruby Liquid accepts via
+		// the underlying Float coercion). Previously these would lex as
+		// identifiers and silently render as variable names.
+		{"sci notation int exponent", `{{ 1e3 }}`, "1000", nil},
+		{"sci notation negative exponent", `{{ 1.5e-2 }}`, "0.015", nil},
+		{"sci notation explicit positive", `{{ 2E+2 }}`, "200", nil},
+
+		// Ruby coerces hash keys for integer subscript lookup, so
+		// `obj[1]` finds the entry stored under the string key "1".
+		{"hash int-key coercion", `{{ h[1] }}`, "v", map[string]any{"h": map[string]any{"1": "v"}}},
+
+		// Ruby's `truncate` and `escape` pass nil through unchanged
+		// rather than coercing to "".
+		{"truncate nil passthrough", `[{{ x | truncate: 5 }}]`, "[]", nil},
+		{"escape nil passthrough", `[{{ x | escape }}]`, "[]", nil},
+
+		// Backslash escapes are NOT interpreted in string literals
+		// (Ruby's lexer takes content verbatim). A template author who
+		// wants a real newline must put one in the source.
+		{"string literal keeps backslash escapes", `{{ "a\nb" }}`, `a\nb`, nil},
+
 		// truncatewords clamps to 1 word minimum (Ruby clamps `words <= 0`).
 		{"truncatewords clamps zero", `{{ s | truncatewords: 0 }}`, "one...", map[string]any{"s": "one two three"}},
 		{"truncatewords clamps negative", `{{ s | truncatewords: -5 }}`, "one...", map[string]any{"s": "one two three"}},
