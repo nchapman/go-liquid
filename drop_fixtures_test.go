@@ -101,6 +101,23 @@ func (d *contextSensitiveDrop) LiquidLookup(key string) (any, bool) {
 	return nil, false
 }
 
+// errorDrop mirrors Ruby's `ErrorDrop`: a Drop whose accessors return
+// tagged inline errors. Renders as `Liquid error: ...` /
+// `Liquid syntax error: ...` in the output without aborting the render.
+type errorDrop struct{}
+
+func (errorDrop) LiquidLookup(key string) (any, bool) {
+	switch key {
+	case "standard_error":
+		return NewStandardError("standard error"), true
+	case "argument_error":
+		return NewArgumentError("argument error"), true
+	case "syntax_error":
+		return NewSyntaxError("syntax error"), true
+	}
+	return nil, false
+}
+
 // testThing mirrors Ruby's `TestThing` from standard_filter_test.rb:
 // not a Drop, but opts into a Liquid representation that increments an
 // internal counter on each access and renders as "woot: N". Used to

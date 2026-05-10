@@ -14,19 +14,54 @@ import (
 // an inline exception-renderer API is added.
 
 func TestUpstream_ErrorHandling_TemplatesParsedWithLineNumbersRendersThemInErrors(t *testing.T) {
-	t.Skip("requires ErrorDrop (Liquid::Drop raising tagged errors) + inline 'Liquid error (line N): ...' rendering")
+	t.Skip("requires a parse-time option that injects line numbers into inline 'Liquid error (line N): ...' output; go-liquid currently renders without the line tag")
 }
 
 func TestUpstream_ErrorHandling_StandardError(t *testing.T) {
-	t.Skip("requires ErrorDrop + inline error rendering")
+	got, err := Render(` {{ errors.standard_error }} `, map[string]any{"errors": errorDrop{}})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	want := ` Liquid error: standard error `
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
 }
 
 func TestUpstream_ErrorHandling_Syntax(t *testing.T) {
-	t.Skip("requires ErrorDrop + inline error rendering")
+	got, err := Render(` {{ errors.syntax_error }} `, map[string]any{"errors": errorDrop{}})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	want := ` Liquid syntax error: syntax error `
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
 }
 
 func TestUpstream_ErrorHandling_Argument(t *testing.T) {
-	t.Skip("requires ErrorDrop + inline error rendering")
+	got, err := Render(` {{ errors.argument_error }} `, map[string]any{"errors": errorDrop{}})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	want := ` Liquid error: argument error `
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// Regression: a *LiquidError must propagate through a filter chain so the
+// output boundary still renders the formatted message rather than a Go
+// pointer dump or an upper-cased garbled form.
+func TestErrorPropagatesThroughFilterChain(t *testing.T) {
+	got, err := Render(`{{ errors.standard_error | upcase }}`, map[string]any{"errors": errorDrop{}})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	want := `Liquid error: standard error`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
 }
 
 func TestUpstream_ErrorHandling_MissingEndtagParseTimeError(t *testing.T) {

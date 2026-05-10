@@ -201,6 +201,14 @@ func (e *evaluator) evalNodeInner(w io.Writer, node Node) error {
 		if err != nil {
 			return err
 		}
+		// A Drop or filter may signal a render-time error by returning a
+		// *LiquidError instead of a value. Render the formatted message
+		// inline and continue, matching Ruby's `Liquid error: ...` /
+		// `Liquid syntax error: ...` behavior.
+		if lerr, ok := val.(*LiquidError); ok {
+			_, err = io.WriteString(w, lerr.Error())
+			return err
+		}
 		_, err = io.WriteString(w, toString(val))
 		return err
 
@@ -849,6 +857,13 @@ func (e *evaluator) evalFilterExpr(x *FilterExpr) (any, error) {
 	input, err := e.evalExpr(x.Input)
 	if err != nil {
 		return nil, err
+	}
+	// A *LiquidError signaled by an upstream Drop should propagate through
+	// the filter chain unchanged so the OutputNode boundary can render its
+	// inline message. Otherwise toString(*LiquidError) prints a Go pointer
+	// dump and the inline error semantics are silently lost.
+	if _, ok := input.(*LiquidError); ok {
+		return input, nil
 	}
 	args, err := e.evalExprList(x.Args)
 	if err != nil {
