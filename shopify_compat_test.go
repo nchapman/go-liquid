@@ -25,6 +25,37 @@ func TestShopifyCompat(t *testing.T) {
 		{"last of utf8 is rune", `{{ s | last }}`, "o", map[string]any{"s": "héllo"}},
 		{"first of empty string returns empty string", `[{{ s | first }}]`, "[]", map[string]any{"s": ""}},
 		{"last of empty string returns empty string", `[{{ s | last }}]`, "[]", map[string]any{"s": ""}},
+
+		// h is Ruby's alias for escape.
+		{"h aliases escape", `{{ s | h }}`, "&lt;b&gt;hi&lt;/b&gt;", map[string]any{"s": "<b>hi</b>"}},
+
+		// compact: "prop" keeps items whose prop is non-nil.
+		{"compact with property", `{{ items | compact: "name" | size }}`, "2", map[string]any{
+			"items": []any{
+				map[string]any{"name": "a", "n": 1},
+				map[string]any{"n": 2},
+				map[string]any{"name": "c", "n": 3},
+			},
+		}},
+
+		// strftime directives previously unmapped (%j year-day, %w weekday,
+		// %s unix epoch, %x/%X locale shorthands, %U/%W week numbers).
+		// Reference date: 2024-03-15 = Friday, day 75 of the year.
+		{"strftime %j", `{{ d | date: "%j" }}`, "075", map[string]any{"d": "2024-03-15T12:00:00Z"}},
+		{"strftime %w", `{{ d | date: "%w" }}`, "5", map[string]any{"d": "2024-03-15T12:00:00Z"}},
+		{"strftime %s", `{{ d | date: "%s" }}`, "1710504000", map[string]any{"d": "2024-03-15T12:00:00Z"}},
+		{"strftime %x", `{{ d | date: "%x" }}`, "03/15/24", map[string]any{"d": "2024-03-15T12:00:00Z"}},
+		{"strftime %X", `{{ d | date: "%X" }}`, "12:00:00", map[string]any{"d": "2024-03-15T12:00:00Z"}},
+		{"strftime %F shorthand", `{{ d | date: "%F" }}`, "2024-03-15", map[string]any{"d": "2024-03-15T12:00:00Z"}},
+
+		// truncatewords clamps to 1 word minimum (Ruby clamps `words <= 0`).
+		{"truncatewords clamps zero", `{{ s | truncatewords: 0 }}`, "one...", map[string]any{"s": "one two three"}},
+		{"truncatewords clamps negative", `{{ s | truncatewords: -5 }}`, "one...", map[string]any{"s": "one two three"}},
+		{"truncatewords nil passthrough", `[{{ x | truncatewords: 2 }}]`, "[]", nil},
+
+		// Sort: nil values sort last (Ruby's nil_safe_compare).
+		{"sort nil-last", `{{ a | sort | join: "," }}`, "1,2,3,", map[string]any{"a": []any{2, nil, 1, 3}}},
+		{"sort_natural nil-last", `{{ a | sort_natural | join: "," }}`, "alpha,beta,", map[string]any{"a": []any{"beta", nil, "alpha"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

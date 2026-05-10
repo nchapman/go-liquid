@@ -79,6 +79,7 @@ var filters = map[string]Filter{
 	"lstrip":        pos(filterLstrip),
 	"rstrip":        pos(filterRstrip),
 	"escape":        pos(filterEscape),
+	"h":             pos(filterEscape), // Ruby alias for `escape`.
 	"split":         pos(filterSplit),
 	"append":        pos(filterAppend),
 	"prepend":       pos(filterPrepend),
@@ -282,6 +283,9 @@ func filterTruncate(input any, args ...any) any {
 }
 
 func filterTruncateWords(input any, args ...any) any {
+	if input == nil {
+		return nil
+	}
 	s := toString(input)
 	wordCount := 15
 	ellipsis := "..."
@@ -292,7 +296,14 @@ func filterTruncateWords(input any, args ...any) any {
 	if len(args) > 1 {
 		ellipsis = toString(args[1])
 	}
+	// Ruby clamps wordCount to a minimum of 1 (standardfilters.rb#truncatewords).
+	if wordCount <= 0 {
+		wordCount = 1
+	}
 
+	// Ruby's `split(" ", n)` is the special single-space form that
+	// collapses runs of whitespace and strips the lead — strings.Fields
+	// matches that exactly.
 	words := strings.Fields(s)
 	if len(words) <= wordCount {
 		return s
@@ -475,21 +486,26 @@ func filterSortNatural(input any, args ...any) any {
 	result := make([]any, len(slice))
 	copy(result, slice)
 
-	// If a property is specified, sort by that property (case-insensitive)
+	// nilSafeCaseCmp: nil sorts last, otherwise case-insensitive string compare.
+	cmpStr := func(a, b any) int {
+		switch {
+		case a == nil && b == nil:
+			return 0
+		case a == nil:
+			return 1
+		case b == nil:
+			return -1
+		}
+		return cmp.Compare(strings.ToLower(toString(a)), strings.ToLower(toString(b)))
+	}
 	if len(args) > 0 {
 		prop := toString(args[0])
 		slices.SortFunc(result, func(a, b any) int {
-			aVal := strings.ToLower(toString(getProperty(a, prop)))
-			bVal := strings.ToLower(toString(getProperty(b, prop)))
-			return cmp.Compare(aVal, bVal)
+			return cmpStr(getProperty(a, prop), getProperty(b, prop))
 		})
 		return result
 	}
-
-	// Sort by value (case-insensitive)
-	slices.SortFunc(result, func(a, b any) int {
-		return cmp.Compare(strings.ToLower(toString(a)), strings.ToLower(toString(b)))
-	})
+	slices.SortFunc(result, cmpStr)
 	return result
 }
 
@@ -597,9 +613,20 @@ func filterCompact(input any, args ...any) any {
 	if slice == nil {
 		return nil
 	}
-
+	// `compact: "property"` (Ruby standardfilters.rb#compact) keeps items
+	// whose property is non-nil. Without an argument it keeps non-nil items.
+	var prop string
+	if len(args) > 0 {
+		prop = toString(args[0])
+	}
 	var result []any
 	for _, item := range slice {
+		if prop != "" {
+			if getProperty(item, prop) != nil {
+				result = append(result, item)
+			}
+			continue
+		}
 		if item != nil {
 			result = append(result, item)
 		}
@@ -698,6 +725,15 @@ func filterSum(input any, args ...any) any {
 
 // compareValues compares two values for sorting
 func compareValues(a, b any) int {
+	// Nil sorts last (matches Ruby's nil_safe_compare in standardfilters.rb).
+	switch {
+	case a == nil && b == nil:
+		return 0
+	case a == nil:
+		return 1
+	case b == nil:
+		return -1
+	}
 	// Try numeric comparison first
 	aNum := toNumber(a)
 	bNum := toNumber(b)
@@ -977,34 +1013,142 @@ func filterDate(input any, args ...any) any {
 	return strftimeToGo(t, format)
 }
 
-// strftimeToGo converts a strftime format string to Go's time format
+// strftimeToGo renders a Ruby-strftime format string against t. Each
+// directive is expanded individually rather than via global replace so
+// that escapes (`%%`) and literal text containing reference patterns
+// (e.g. "01" inside output text vs. "%m") cannot collide. Directives that
+// don't have a 1:1 Go layout-string analogue (week numbers, year-day,
+// unix timestamp) are computed from t directly.
 func strftimeToGo(t time.Time, format string) string {
-	// Map of strftime directives to Go format
-	replacements := map[string]string{
-		"%Y": "2006",
-		"%y": "06",
-		"%m": "01",
-		"%d": "02",
-		"%H": "15",
-		"%I": "03",
-		"%M": "04",
-		"%S": "05",
-		"%p": "PM",
-		"%A": "Monday",
-		"%a": "Mon",
-		"%B": "January",
-		"%b": "Jan",
-		"%Z": "MST",
-		"%z": "-0700",
-		"%%": "%",
+	var sb strings.Builder
+	sb.Grow(len(format) + 16)
+	for i := 0; i < len(format); i++ {
+		if format[i] != '%' || i+1 == len(format) {
+			sb.WriteByte(format[i])
+			continue
+		}
+		i++
+		switch format[i] {
+		case 'Y':
+			fmt.Fprintf(&sb, "%04d", t.Year())
+		case 'y':
+			fmt.Fprintf(&sb, "%02d", t.Year()%100)
+		case 'm':
+			fmt.Fprintf(&sb, "%02d", t.Month())
+		case 'd':
+			fmt.Fprintf(&sb, "%02d", t.Day())
+		case 'e':
+			fmt.Fprintf(&sb, "%2d", t.Day())
+		case 'H':
+			fmt.Fprintf(&sb, "%02d", t.Hour())
+		case 'k':
+			fmt.Fprintf(&sb, "%2d", t.Hour())
+		case 'I':
+			h := t.Hour() % 12
+			if h == 0 {
+				h = 12
+			}
+			fmt.Fprintf(&sb, "%02d", h)
+		case 'l':
+			h := t.Hour() % 12
+			if h == 0 {
+				h = 12
+			}
+			fmt.Fprintf(&sb, "%2d", h)
+		case 'M':
+			fmt.Fprintf(&sb, "%02d", t.Minute())
+		case 'S':
+			fmt.Fprintf(&sb, "%02d", t.Second())
+		case 'p':
+			if t.Hour() < 12 {
+				sb.WriteString("AM")
+			} else {
+				sb.WriteString("PM")
+			}
+		case 'P':
+			if t.Hour() < 12 {
+				sb.WriteString("am")
+			} else {
+				sb.WriteString("pm")
+			}
+		case 'A':
+			sb.WriteString(t.Weekday().String())
+		case 'a':
+			sb.WriteString(t.Weekday().String()[:3])
+		case 'B':
+			sb.WriteString(t.Month().String())
+		case 'b', 'h':
+			sb.WriteString(t.Month().String()[:3])
+		case 'j':
+			fmt.Fprintf(&sb, "%03d", t.YearDay())
+		case 'w':
+			fmt.Fprintf(&sb, "%d", int(t.Weekday())) // Sunday=0
+		case 'u':
+			d := int(t.Weekday())
+			if d == 0 {
+				d = 7
+			}
+			fmt.Fprintf(&sb, "%d", d) // ISO Monday=1..Sunday=7
+		case 'U':
+			fmt.Fprintf(&sb, "%02d", weekOfYearSundayStart(t))
+		case 'W':
+			fmt.Fprintf(&sb, "%02d", weekOfYearMondayStart(t))
+		case 's':
+			fmt.Fprintf(&sb, "%d", t.Unix())
+		case 'Z':
+			sb.WriteString(t.Format("MST"))
+		case 'z':
+			sb.WriteString(t.Format("-0700"))
+		case 'c':
+			// Ruby's default %c is "%a %b %e %H:%M:%S %Y".
+			sb.WriteString(strftimeToGo(t, "%a %b %e %H:%M:%S %Y"))
+		case 'x':
+			sb.WriteString(strftimeToGo(t, "%m/%d/%y"))
+		case 'X':
+			sb.WriteString(strftimeToGo(t, "%H:%M:%S"))
+		case 'D':
+			sb.WriteString(strftimeToGo(t, "%m/%d/%y"))
+		case 'F':
+			sb.WriteString(strftimeToGo(t, "%Y-%m-%d"))
+		case 'R':
+			sb.WriteString(strftimeToGo(t, "%H:%M"))
+		case 'T':
+			sb.WriteString(strftimeToGo(t, "%H:%M:%S"))
+		case 'r':
+			sb.WriteString(strftimeToGo(t, "%I:%M:%S %p"))
+		case 'n':
+			sb.WriteByte('\n')
+		case 't':
+			sb.WriteByte('\t')
+		case '%':
+			sb.WriteByte('%')
+		default:
+			// Unknown directive: emit the source verbatim so authors can
+			// spot the typo, matching Ruby's strftime ignore-and-pass behavior.
+			sb.WriteByte('%')
+			sb.WriteByte(format[i])
+		}
 	}
+	return sb.String()
+}
 
-	result := format
-	for directive, goFormat := range replacements {
-		result = strings.ReplaceAll(result, directive, goFormat)
-	}
+// weekOfYearSundayStart implements strftime %U: the week number of the
+// year (00-53), with the first Sunday being the first day of week 01.
+// Days before the first Sunday are in week 00.
+func weekOfYearSundayStart(t time.Time) int {
+	yday := t.YearDay()
+	jan1Weekday := int(time.Date(t.Year(), 1, 1, 0, 0, 0, 0, t.Location()).Weekday())
+	return (yday + jan1Weekday - 1) / 7
+}
 
-	return t.Format(result)
+// weekOfYearMondayStart implements strftime %W: same as %U but the first
+// Monday begins week 01.
+func weekOfYearMondayStart(t time.Time) int {
+	yday := t.YearDay()
+	jan1Weekday := int(time.Date(t.Year(), 1, 1, 0, 0, 0, 0, t.Location()).Weekday())
+	// Shift Sunday=0 to Sunday=6 so Monday=0.
+	jan1Weekday = (jan1Weekday + 6) % 7
+	return (yday + jan1Weekday - 1) / 7
 }
 
 // Type conversion utilities
