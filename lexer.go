@@ -442,22 +442,9 @@ func (l *lexer) scanNumber() token {
 		}
 	}
 
-	// Scientific notation: `e`/`E` optionally followed by sign and digits.
-	// Only consume the exponent if at least one digit follows, otherwise
-	// `5e` would be misread (Ruby would treat the trailing `e` as a name).
-	if p < n && (src[p] == 'e' || src[p] == 'E') {
-		ep := p + 1
-		if ep < n && (src[ep] == '+' || src[ep] == '-') {
-			ep++
-		}
-		if ep < n && isDigit(src[ep]) {
-			isFloat = true
-			p = ep
-			for p < n && isDigit(src[p]) {
-				p++
-			}
-		}
-	}
+	// Ruby Liquid's NUMBER_LITERAL is /-?\d+(\.\d+)?/ — scientific notation
+	// is NOT recognized. `1e5` lexes as int(1) followed by identifier `e5` to
+	// stay compatible with the Ruby reference.
 
 	literal := src[startPos:p]
 	// No newlines can appear in a number — column update is a simple delta.

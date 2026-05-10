@@ -177,10 +177,10 @@ func filterRemoveLast(input any, args ...any) any {
 // filterReject keeps items whose property does NOT match the target value.
 // Mirror of filterWhere.
 func filterReject(input any, args ...any) any {
-	slice := toSlice(input)
-	if slice == nil || len(args) == 0 {
+	if len(args) == 0 {
 		return nil
 	}
+	slice := toFilterInput(input)
 	prop := toString(args[0])
 	var target any = true
 	if len(args) > 1 {
@@ -197,10 +197,10 @@ func filterReject(input any, args ...any) any {
 
 // filterHas reports whether any item has a matching property value.
 func filterHas(input any, args ...any) any {
-	slice := toSlice(input)
-	if slice == nil || len(args) == 0 {
+	if len(args) == 0 {
 		return false
 	}
+	slice := toFilterInput(input)
 	prop := toString(args[0])
 	var target any = true
 	if len(args) > 1 {
@@ -217,10 +217,10 @@ func filterHas(input any, args ...any) any {
 // filterFindIndex returns the 0-based index of the first matching item, or
 // nil if none match (matching Shopify's behavior so `default:` works).
 func filterFindIndex(input any, args ...any) any {
-	slice := toSlice(input)
-	if slice == nil || len(args) == 0 {
+	if len(args) == 0 {
 		return nil
 	}
+	slice := toFilterInput(input)
 	prop := toString(args[0])
 	var target any = true
 	if len(args) > 1 {

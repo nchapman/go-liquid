@@ -134,7 +134,6 @@ var standardFilters = map[string]Filter{
 	"uniq":         pos(filterUniq),
 	"compact":      pos(filterCompact),
 	"concat":       pos(filterConcat),
-	"flatten":      pos(filterFlatten),
 	"sum":          pos(filterSum),
 
 	// `default` accepts the `allow_false:` named arg.
@@ -445,7 +444,7 @@ func filterSize(input any, args ...any) any {
 }
 
 func filterJoin(input any, args ...any) any {
-	slice := toSlice(input)
+	slice := toFilterInput(input)
 	sep := " " // default separator
 	if len(args) > 0 {
 		sep = toString(args[0])
@@ -459,7 +458,7 @@ func filterJoin(input any, args ...any) any {
 }
 
 func filterReverse(input any, args ...any) any {
-	slice := toSlice(input)
+	slice := toFilterInput(input)
 	result := make([]any, len(slice))
 	for i, v := range slice {
 		result[len(slice)-1-i] = v
@@ -468,9 +467,10 @@ func filterReverse(input any, args ...any) any {
 }
 
 func filterSort(input any, args ...any) any {
-	slice := toSlice(input)
-	if slice == nil {
-		return nil
+	slice := toFilterInput(input)
+	if len(slice) == 0 {
+		// Ruby returns [] for empty input (standardfilters.rb#sort).
+		return []any{}
 	}
 
 	result := make([]any, len(slice))
@@ -495,9 +495,10 @@ func filterSort(input any, args ...any) any {
 }
 
 func filterSortNatural(input any, args ...any) any {
-	slice := toSlice(input)
-	if slice == nil {
-		return nil
+	slice := toFilterInput(input)
+	if len(slice) == 0 {
+		// Ruby returns [] for empty input (standardfilters.rb#sort_natural).
+		return []any{}
 	}
 
 	result := make([]any, len(slice))
@@ -527,10 +528,10 @@ func filterSortNatural(input any, args ...any) any {
 }
 
 func filterMap(input any, args ...any) any {
-	slice := toSlice(input)
-	if slice == nil || len(args) == 0 {
+	if len(args) == 0 {
 		return nil
 	}
+	slice := toFilterInput(input)
 
 	prop := toString(args[0])
 	result := make([]any, len(slice))
@@ -541,10 +542,10 @@ func filterMap(input any, args ...any) any {
 }
 
 func filterWhere(input any, args ...any) any {
-	slice := toSlice(input)
-	if slice == nil || len(args) == 0 {
+	if len(args) == 0 {
 		return nil
 	}
+	slice := toFilterInput(input)
 
 	prop := toString(args[0])
 	var targetValue any = true // default is to check for truthy
@@ -563,10 +564,10 @@ func filterWhere(input any, args ...any) any {
 }
 
 func filterFind(input any, args ...any) any {
-	slice := toSlice(input)
-	if slice == nil || len(args) == 0 {
+	if len(args) == 0 {
 		return nil
 	}
+	slice := toFilterInput(input)
 
 	prop := toString(args[0])
 	var targetValue any = true
@@ -589,10 +590,7 @@ func filterFind(input any, args ...any) any {
 // correctly. The optional `property` argument compares items by that
 // property's value rather than the items themselves.
 func filterUniq(input any, args ...any) any {
-	slice := toSlice(input)
-	if slice == nil {
-		return nil
-	}
+	slice := toFilterInput(input)
 
 	var prop string
 	if len(args) > 0 {
@@ -626,10 +624,7 @@ func filterUniq(input any, args ...any) any {
 }
 
 func filterCompact(input any, args ...any) any {
-	slice := toSlice(input)
-	if slice == nil {
-		return nil
-	}
+	slice := toFilterInput(input)
 	// `compact: "property"` (Ruby standardfilters.rb#compact) keeps items
 	// whose property is non-nil. Without an argument it keeps non-nil items.
 	var prop string
@@ -652,11 +647,7 @@ func filterCompact(input any, args ...any) any {
 }
 
 func filterConcat(input any, args ...any) any {
-	slice := toSlice(input)
-	if slice == nil {
-		slice = []any{}
-	}
-
+	slice := toFilterInput(input)
 	result := make([]any, len(slice))
 	copy(result, slice)
 
@@ -664,6 +655,7 @@ func filterConcat(input any, args ...any) any {
 		if !isArrayLike(arg) {
 			return filterErrorf("concat: argument is not an array")
 		}
+		// Argument bypasses InputIterator in Ruby — no flattening here.
 		result = append(result, toSlice(arg)...)
 	}
 	return result
@@ -682,35 +674,49 @@ func isArrayLike(v any) bool {
 	return rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array
 }
 
-func filterFlatten(input any, args ...any) any {
-	slice := toSlice(input)
-	if slice == nil {
+// toFilterInput mirrors Ruby Liquid's InputIterator: most array filters
+// (join, sort, map, where, uniq, ...) flatten nested arrays before iterating
+// and wrap a Hash input as a single-element array. Strings are wrapped (not
+// split into runes), and nil becomes the empty slice. Filters that don't go
+// through InputIterator in Ruby (first, last, size, slice) keep using
+// toSlice directly.
+//
+// Drops are not iterable here — they fall through to the scalar-wrap branch
+// as `[drop]`, matching Ruby's `Array(hash_like)`. A Drop intended to act as
+// a collection should be exposed as a real slice/map by the host code.
+func toFilterInput(v any) []any {
+	if v == nil {
 		return []any{}
 	}
-	var result []any
+	if s, ok := v.(string); ok {
+		return []any{s}
+	}
+	if rv := reflect.ValueOf(v); rv.Kind() == reflect.Map {
+		return []any{v}
+	}
+	if !isArrayLike(v) {
+		return []any{v}
+	}
+	base := toSlice(v)
+	out := make([]any, 0, len(base))
 	var walk func([]any)
 	walk = func(items []any) {
-		for _, item := range items {
-			// Mirror Ruby Array#flatten: recursively flatten any nested
-			// arrays, but never descend into strings (toSlice splits them).
-			if _, isString := item.(string); !isString {
-				if sub := toSlice(item); sub != nil {
+		for _, it := range items {
+			if _, isStr := it.(string); !isStr && isArrayLike(it) {
+				if sub := toSlice(it); sub != nil {
 					walk(sub)
 					continue
 				}
 			}
-			result = append(result, item)
+			out = append(out, it)
 		}
 	}
-	walk(slice)
-	return result
+	walk(base)
+	return out
 }
 
 func filterSum(input any, args ...any) any {
-	slice := toSlice(input)
-	if slice == nil {
-		return 0
-	}
+	slice := toFilterInput(input)
 
 	var sum float64
 	hasFloat := false

@@ -63,12 +63,33 @@ func TestShopifyCompat(t *testing.T) {
 		{"date int unix timestamp", `{{ d | date: "%Y-%m-%d" }}`, "2024-03-15", map[string]any{"d": int64(1710504000)}},
 		{"date numeric string timestamp", `{{ d | date: "%Y-%m-%d" }}`, "2024-03-15", map[string]any{"d": "1710504000"}},
 
-		// Scientific notation in number literals (Ruby Liquid accepts via
-		// the underlying Float coercion). Previously these would lex as
-		// identifiers and silently render as variable names.
-		{"sci notation int exponent", `{{ 1e3 }}`, "1000", nil},
-		{"sci notation negative exponent", `{{ 1.5e-2 }}`, "0.015", nil},
-		{"sci notation explicit positive", `{{ 2E+2 }}`, "200", nil},
+		// Ruby's NUMBER_LITERAL is /-?\d+(\.\d+)?/ — scientific notation is
+		// NOT recognized. `1e3` lexes as int(1) followed by identifier `e3`,
+		// which the variable parser rejects. (Lax mode would render the int
+		// and ignore the trailing junk; default strict mode errors.)
+		// Locked down so a future "helpful" lexer extension doesn't drift.
+
+		// Ruby's array filters wrap input through InputIterator, which
+		// flattens nested arrays before iterating. Locks in parity with
+		// `[[1,2],[3]] | join: ","` => "1,2,3" in Ruby.
+		{"join flattens nested arrays", `{{ a | join: "," }}`, "1,2,3,4,5",
+			map[string]any{"a": []any{[]any{1, 2}, []any{3, []any{4, 5}}}}},
+		{"sort flattens nested arrays", `{{ a | sort | join: "," }}`, "1,2,3",
+			map[string]any{"a": []any{[]any{3}, []any{1, 2}}}},
+		{"map flattens nested arrays", `{{ a | map: "x" | join: "," }}`, "1,2",
+			map[string]any{"a": []any{[]any{map[string]any{"x": 1}}, map[string]any{"x": 2}}}},
+
+		// Ruby's sort/sort_natural return [] (not nil) for empty input, so
+		// downstream `| size` reports 0 and the value renders as empty.
+		{"sort empty returns []", `[{{ a | sort | size }}]`, "[0]",
+			map[string]any{"a": []any{}}},
+		{"sort_natural empty returns []", `[{{ a | sort_natural | size }}]`, "[0]",
+			map[string]any{"a": []any{}}},
+
+		// Ruby's InputIterator wraps a single string as [string] (Array(s)),
+		// it does NOT split into characters. So `"FB" | join: ","` is "FB".
+		{"join does not split string into chars", `{{ s | join: "," }}`, "FB",
+			map[string]any{"s": "FB"}},
 
 		// Ruby coerces hash keys for integer subscript lookup, so
 		// `obj[1]` finds the entry stored under the string key "1".

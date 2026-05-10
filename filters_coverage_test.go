@@ -89,7 +89,6 @@ func TestFiltersComprehensive(t *testing.T) {
 
 		// Array
 		{"compact removes nil", `{{ a | compact | join: "," }}`, map[string]any{"a": []any{1, nil, 2, nil, 3}}, "1,2,3"},
-		{"flatten", `{{ a | flatten | join: "," }}`, map[string]any{"a": []any{[]any{1, 2}, []any{3, []any{4, 5}}}}, "1,2,3,4,5"},
 		{"sort numbers", `{{ a | sort | join: "," }}`, map[string]any{"a": []any{3, 1, 2}}, "1,2,3"},
 		{"sort_natural mixed case", `{{ a | sort_natural | join: "," }}`, map[string]any{"a": []any{"Banana", "apple", "Cherry"}}, "apple,Banana,Cherry"},
 		// Mixed numeric+string sort: documents current ordering so a future

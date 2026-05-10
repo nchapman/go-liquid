@@ -59,9 +59,11 @@
 {% endif %}
   </section>
 {% endfor %}
+  {%- assign total_products = 0 -%}
+  {%- for c in categories -%}{%- assign total_products = total_products | plus: c.products.size -%}{%- endfor %}
   <footer>
     Total categories: {{ categories.size }}
-    Total products: {{ categories | map: "products" | flatten | size }}
+    Total products: {{ total_products }}
   </footer>
 </body>
 </html>
