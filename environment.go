@@ -22,6 +22,7 @@ type Environment struct {
 	inlineTags map[string]TagParser
 	blockTags  map[string]TagParser
 	loader     Loader
+	errorMode  ErrorMode
 }
 
 // NewEnvironment returns a fresh environment pre-loaded with the standard
@@ -98,6 +99,24 @@ func (e *Environment) RegisterBlock(name string, parse TagParser) {
 // environment, so they can resolve {% render %} / {% include %} partials
 // without an explicit per-template Template.WithLoader. Returns the
 // environment for chaining.
+// WithErrorMode sets the parse-time error mode for templates parsed
+// through this environment. The default is ErrorModeStrict. See
+// ErrorMode for the semantics of each setting. Returns the environment
+// for chaining.
+func (e *Environment) WithErrorMode(mode ErrorMode) *Environment {
+	e.mu.Lock()
+	e.errorMode = mode
+	e.mu.Unlock()
+	return e
+}
+
+// ErrorMode returns the current parse-time error mode.
+func (e *Environment) ErrorMode() ErrorMode {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.errorMode
+}
+
 func (e *Environment) WithLoader(l Loader) *Environment {
 	e.mu.Lock()
 	e.loader = l
@@ -115,7 +134,7 @@ func (e *Environment) Parse(source string) (*Template, error) {
 	if err != nil {
 		return nil, err
 	}
-	t := &Template{ast: ast, env: e}
+	t := &Template{ast: ast, env: e, warnings: p.warnings}
 	if l := e.currentLoader(); l != nil {
 		t.WithLoader(l)
 	}

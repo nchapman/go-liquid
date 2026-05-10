@@ -8,10 +8,12 @@ import (
 
 // parser parses a Liquid template into an AST.
 type parser struct {
-	l            *lexer
-	curToken     token
-	trimNextText bool // trim leading whitespace from next text node (set by -%} tags)
-	env          *Environment
+	l                  *lexer
+	curToken           token
+	trimNextText       bool // trim leading whitespace from next text node (set by -%} tags)
+	pendingTagTrimLeft bool // current tag began with `{%-`; consulted by unknown-tag fallback
+	env                *Environment
+	warnings           []Warning
 }
 
 func newParser(input string) *parser {
@@ -170,7 +172,10 @@ func (p *parser) parseOutputWithTrim() (Node, bool, error) {
 
 func (p *parser) parseTagWithTrim() (Node, bool, error) {
 	p.trimNextText = false // reset so we capture only this tag's closing trim state
+	trimLeft := p.curToken.typ == tokenTagTrim
+	p.pendingTagTrimLeft = trimLeft
 	node, err := p.parseTag()
+	p.pendingTagTrimLeft = false
 	return node, p.trimNextText, err
 }
 
@@ -238,8 +243,53 @@ func (p *parser) parseTag() (Node, error) {
 	if node, ok, err := p.parseCustomTag(); ok {
 		return node, err
 	}
-	return nil, newParseError(p.curToken.line, p.curToken.column,
-		"unknown tag: %q", p.curToken.literal)
+	return p.handleUnknownTag()
+}
+
+// handleUnknownTag dispatches the unknown-tag fork according to the
+// active environment's ErrorMode. Strict (default) returns a parse
+// error matching prior behavior. Warn records a Warning and emits the
+// raw `{% NAME ... %}` source span as text. Lax does the same but
+// without recording a warning.
+func (p *parser) handleUnknownTag() (Node, error) {
+	name := p.curToken.literal
+	line, column := p.curToken.line, p.curToken.column
+	mode := ErrorModeStrict
+	if p.env != nil {
+		mode = p.env.ErrorMode()
+	}
+	if mode == ErrorModeStrict {
+		return nil, newParseError(line, column, "unknown tag: %q", name)
+	}
+	trimLeft := p.pendingTagTrimLeft
+	// Consume the rest of the tag verbatim so the output preserves the source.
+	p.l.mode = modeText
+	markup, trimRight, closed := p.l.scanToTagClose(true)
+	if !closed {
+		return nil, newParseError(line, column,
+			"unterminated {%% %s ... %%}: expected %%}", name)
+	}
+	p.trimNextText = trimRight
+	p.nextToken()
+	if mode == ErrorModeWarn {
+		p.warnings = append(p.warnings, Warning{
+			Message: fmt.Sprintf("unknown tag: %q", name),
+			Line:    line,
+			Column:  column,
+		})
+	}
+	openDelim, closeDelim := "{%", "%}"
+	if trimLeft {
+		openDelim = "{%-"
+	}
+	if trimRight {
+		closeDelim = "-%}"
+	}
+	// Preserve interior whitespace verbatim — markup starts with whatever
+	// separator the source had between the tag name and its body, so we
+	// don't insert any extra space ourselves.
+	raw := openDelim + " " + name + markup + closeDelim
+	return &TextNode{Text: raw, Line: line, Column: column}, nil
 }
 
 // parseCustomTag dispatches to a registered TagParser for the current tag

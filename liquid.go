@@ -53,7 +53,18 @@ type Template struct {
 	env      *Environment
 	partials atomic.Pointer[partialCache]
 	name     string // optional; populated when loaded via a Loader
+	warnings []Warning
 }
+
+// Warnings returns parse-time warnings recorded when the template was
+// parsed against an environment in ErrorModeWarn. Always empty for
+// templates parsed in ErrorModeStrict (the default) or ErrorModeLax.
+//
+// Warnings from partial templates loaded via {% include %} or
+// {% render %} are NOT bubbled up here — those partials are parsed by
+// the loader at first use and their warnings stay attached to the
+// partial Template. Inspect them via the loader if needed.
+func (t *Template) Warnings() []Warning { return t.warnings }
 
 func (t *Template) environment() *Environment {
 	if t.env != nil {
