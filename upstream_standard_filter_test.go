@@ -513,7 +513,7 @@ func TestUpstream_StdFilter_DividedBy(t *testing.T) {
 }
 
 func TestUpstream_StdFilter_DividedBy_FloatNumerator(t *testing.T) {
-	t.Skip("go-liquid: divisor decides float-ness (documented divergence in filterDividedBy); 2.0/4 returns 0 because 4 is int")
+	t.Skip("Go's encoding/json unmarshals all JSON numbers as float64, so we can't distinguish user-written 2.0 from JSON 2; divisor decides float-ness — documented divergence from Ruby")
 	wantStd(t, "{{ 2.0 | divided_by: 4 }}", nil, "0.5")
 }
 

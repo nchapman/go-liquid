@@ -900,8 +900,10 @@ func filterDividedBy(input any, args ...any) any {
 	}
 
 	// Float result if the divisor has a fractional part; otherwise integer
-	// division (matches the previous spec fixtures and is the most common
-	// Liquid expectation, since JSON-unmarshalled integers arrive as float64).
+	// division. This is a documented divergence from Ruby (which switches to
+	// float when *either* operand is Float). We can't replicate Ruby fully
+	// because Go's encoding/json unmarshals every JSON number as float64,
+	// so we can't distinguish a user-written `2.0` from a JSON integer `2`.
 	if bFloat != float64(int64(bFloat)) {
 		return toFloat(a) / bFloat
 	}

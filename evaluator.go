@@ -1087,8 +1087,11 @@ func getPropertyOK(obj any, prop string, ctx RenderContext) (any, bool) {
 		// Fall through to special-property handling so `hash.size` (etc.) works
 		// when the map has no literal entry for that name. An explicit map entry
 		// shadows the built-in.
-		if prop == "size" {
+		switch prop {
+		case "size":
 			return len(m), true
+		case "empty?":
+			return len(m) == 0, true
 		}
 		return nil, false
 	}
@@ -1106,6 +1109,14 @@ func getPropertyOK(obj any, prop string, ctx RenderContext) (any, bool) {
 		return nil, true
 	case "size":
 		return filterSize(obj), true
+	case "empty?":
+		if s, ok := obj.(string); ok {
+			return len(s) == 0, true
+		}
+		if isArrayLike(obj) {
+			return len(toSlice(obj)) == 0, true
+		}
+		return nil, false
 	}
 
 	rv := reflect.ValueOf(obj)

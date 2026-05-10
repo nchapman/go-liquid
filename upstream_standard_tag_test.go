@@ -131,7 +131,6 @@ func TestUpstreamStandardTag(t *testing.T) {
 	})
 
 	t.Run("test_case_on_length_with_else", func(t *testing.T) {
-		t.Skip("TODO: support `.empty?` accessor on collections (Ruby method-call syntax)")
 		renderEq(t, "empty?",
 			"{% case a.empty? %}{% when true %}true{% when false %}false{% else %}else{% endcase %}",
 			nil, "else")
