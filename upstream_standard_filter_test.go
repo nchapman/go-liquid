@@ -126,8 +126,7 @@ func TestUpstream_StdFilter_Split(t *testing.T) {
 }
 
 func TestUpstream_StdFilter_Split_OverlappingPattern(t *testing.T) {
-	t.Skip("go-liquid split divergence: 'A? ~ ~ ~ ,Z' split on '~ ~ ~' yields 3 pieces; Ruby yields 2")
-	wantStd(t, "{{ s | split: '~ ~ ~' | join: '/' }}", map[string]any{"s": "A? ~ ~ ~ ,Z"}, "A? /,Z")
+	wantStd(t, "{{ s | split: '~ ~ ~' | join: '/' }}", map[string]any{"s": "A? ~ ~ ~ ,Z"}, "A? / ,Z")
 }
 
 func TestUpstream_StdFilter_SquishFilter(t *testing.T) {
