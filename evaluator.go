@@ -27,6 +27,7 @@ type renderConfig struct {
 	partials        *partialCache
 	strictVariables bool
 	strictFilters   bool
+	limits          *ResourceLimits
 }
 
 // registers holds per-render scratch state — the Shopify-Liquid concept
@@ -93,6 +94,11 @@ func (e *evaluator) evaluate(w io.Writer, tmpl *templateAST) error {
 // evalNodes renders each node into w in order, propagating the first
 // error (or break/continue control signal) back to the caller.
 func (e *evaluator) evalNodes(w io.Writer, nodes []Node) error {
+	if e.cfg.limits != nil {
+		if err := e.cfg.limits.incrementRenderScore(len(nodes)); err != nil {
+			return err
+		}
+	}
 	for _, node := range nodes {
 		if err := e.evalNode(w, node); err != nil {
 			return err
@@ -167,14 +173,23 @@ func (e *evaluator) evalNodeInner(w io.Writer, node Node) error {
 			return err
 		}
 		e.ctx.setGlobal(n.Variable, val)
+		if e.cfg.limits != nil {
+			if err := e.cfg.limits.incrementAssignScore(assignScoreOf(val)); err != nil {
+				return err
+			}
+		}
 		return nil
 
 	case *CaptureTag:
-		captured, err := e.evalNodeToString(n.Body)
-		if err != nil {
+		var sb strings.Builder
+		var cw io.Writer = &sb
+		if e.cfg.limits != nil {
+			cw = &captureWriter{w: &sb, l: e.cfg.limits}
+		}
+		if err := e.evalNodes(cw, n.Body); err != nil {
 			return err
 		}
-		e.ctx.setGlobal(n.Variable, captured)
+		e.ctx.setGlobal(n.Variable, sb.String())
 		return nil
 
 	case *CommentTag:

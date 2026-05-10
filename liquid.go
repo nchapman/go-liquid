@@ -104,6 +104,7 @@ type RenderOption func(*renderOpts)
 type renderOpts struct {
 	strictVariables bool
 	strictFilters   bool
+	limits          *ResourceLimits
 }
 
 // StrictVariables makes Render fail when a referenced variable is
@@ -130,9 +131,17 @@ func (t *Template) Render(data any, opts ...RenderOption) (string, error) {
 	eval.cfg.partials = t.partials.Load()
 	eval.cfg.strictVariables = o.strictVariables
 	eval.cfg.strictFilters = o.strictFilters
+	eval.cfg.limits = o.limits
 	eval.templateName = t.name
 	var sb strings.Builder
-	if err := eval.evaluate(&sb, t.ast); err != nil {
+	var w io.Writer = &sb
+	if o.limits != nil {
+		if err := o.limits.reset(); err != nil {
+			return "", err
+		}
+		w = &limitsWriter{w: w, l: o.limits}
+	}
+	if err := eval.evaluate(w, t.ast); err != nil {
 		return "", err
 	}
 	return sb.String(), nil
@@ -150,7 +159,14 @@ func (t *Template) RenderTo(w io.Writer, data any, opts ...RenderOption) error {
 	eval.cfg.partials = t.partials.Load()
 	eval.cfg.strictVariables = o.strictVariables
 	eval.cfg.strictFilters = o.strictFilters
+	eval.cfg.limits = o.limits
 	eval.templateName = t.name
+	if o.limits != nil {
+		if err := o.limits.reset(); err != nil {
+			return err
+		}
+		w = &limitsWriter{w: w, l: o.limits}
+	}
 	return eval.evaluate(w, t.ast)
 }
 
