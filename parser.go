@@ -832,11 +832,18 @@ ParamLoop:
 					"expected ':' after offset")
 			}
 			p.nextToken()
-			offset, err := p.parsePrimary()
-			if err != nil {
-				return nil, err
+			// Shopify accepts `offset: continue` to resume from where the
+			// previous render of this same for-tag stopped (pagination).
+			if p.isWord("continue") {
+				tag.OffsetContinue = true
+				p.nextToken()
+			} else {
+				offset, err := p.parsePrimary()
+				if err != nil {
+					return nil, err
+				}
+				tag.Offset = offset
 			}
-			tag.Offset = offset
 		case p.isWord("reversed"):
 			p.nextToken()
 			tag.Reversed = true

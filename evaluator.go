@@ -42,12 +42,18 @@ type registers struct {
 	counter       map[string]int
 	ifchangedLast string
 	ifchangedSet  bool
+	// forContinue tracks the next index a `for ... offset: continue` loop
+	// should resume from. Ruby keys this by "{var}-{collection}", so two
+	// for-tags walking the same collection with the same loop variable
+	// share a cursor — that's exactly the pagination shape.
+	forContinue map[string]int
 }
 
 func newRegisters() *registers {
 	return &registers{
-		cycle:   map[string]int{},
-		counter: map[string]int{},
+		cycle:       map[string]int{},
+		counter:     map[string]int{},
+		forContinue: map[string]int{},
 	}
 }
 
@@ -511,18 +517,28 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 		return nil
 	}
 
-	// Apply offset
-	if tag.Offset != nil {
+	// `offset: continue` resumes from where the previous for-tag iterating
+	// the same {var,collection} stopped. The cursor lives in registers,
+	// keyed by forloopName so distinct loops over the same collection (or
+	// distinct collections under the same variable name) get independent
+	// cursors. Registers are per-Render, so the cursor resets between
+	// top-level renders.
+	contKey := forloopName(tag)
+	off := 0
+	switch {
+	case tag.OffsetContinue:
+		off = e.regs.forContinue[contKey]
+	case tag.Offset != nil:
 		offset, err := e.evalExpr(tag.Offset)
 		if err != nil {
 			return err
 		}
-		off := int(toInt(toNumber(offset)))
-		if off > 0 && off < len(items) {
-			items = items[off:]
-		} else if off >= len(items) {
-			items = nil
-		}
+		off = int(toInt(toNumber(offset)))
+	}
+	if off > 0 && off < len(items) {
+		items = items[off:]
+	} else if off >= len(items) {
+		items = nil
 	}
 
 	// Apply limit
@@ -564,6 +580,7 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 	defer func() { e.ctx = e.ctx.parent }()
 
 	length := len(items)
+	consumed := 0
 
 	for i, item := range items {
 		e.ctx.set(tag.Variable, item)
@@ -575,6 +592,7 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 		// returned (partial-output, errBreak) and the caller appended
 		// the partial output before breaking.
 		err := e.evalNodes(w, tag.Body)
+		consumed = i + 1
 		if errors.Is(err, errBreak) {
 			break
 		}
@@ -585,6 +603,12 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 			return err
 		}
 	}
+
+	// Update the continue cursor so a sibling `for ... offset: continue`
+	// resumes from the absolute position in the original collection.
+	// Always record (even when this loop didn't use OffsetContinue) so a
+	// later loop reading the same collection can resume past us.
+	e.regs.forContinue[contKey] = off + consumed
 
 	return nil
 }

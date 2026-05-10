@@ -56,6 +56,22 @@ func TestShopifyCompat(t *testing.T) {
 		// Sort: nil values sort last (Ruby's nil_safe_compare).
 		{"sort nil-last", `{{ a | sort | join: "," }}`, "1,2,3,", map[string]any{"a": []any{2, nil, 1, 3}}},
 		{"sort_natural nil-last", `{{ a | sort_natural | join: "," }}`, "alpha,beta,", map[string]any{"a": []any{"beta", nil, "alpha"}}},
+
+		// for ... offset: continue (Shopify pagination idiom): a second
+		// for-tag with offset:continue resumes from where the previous
+		// for-tag stopped within the same Render.
+		{
+			"offset:continue resumes after limited loop",
+			`{% for i in items limit: 3 %}{{ i }}{% endfor %}|{% for i in items offset: continue %}{{ i }}{% endfor %}`,
+			"123|45678",
+			map[string]any{"items": []any{1, 2, 3, 4, 5, 6, 7, 8}},
+		},
+		{
+			"offset:continue with explicit limit on resume",
+			`{% for i in items limit: 2 %}{{ i }}{% endfor %}-{% for i in items offset: continue limit: 3 %}{{ i }}{% endfor %}`,
+			"12-345",
+			map[string]any{"items": []any{1, 2, 3, 4, 5, 6, 7, 8}},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

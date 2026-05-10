@@ -173,16 +173,22 @@ func (t *CaseTag) node()                   {}
 func (t *CaseTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // ForTag represents {% for item in collection %}...{% endfor %}.
+//
+// OffsetContinue is set when the template wrote `offset: continue`
+// (a Shopify pagination idiom): the loop resumes from the position
+// where the previous render of this same for-tag stopped, tracked in
+// a per-render register keyed by tag pointer.
 type ForTag struct {
-	Variable   string
-	Collection Expression
-	Body       []Node
-	ElseBody   []Node // rendered when collection is empty
-	Limit      Expression
-	Offset     Expression
-	Reversed   bool
-	Line       int
-	Column     int
+	Variable       string
+	Collection     Expression
+	Body           []Node
+	ElseBody       []Node // rendered when collection is empty
+	Limit          Expression
+	Offset         Expression
+	OffsetContinue bool
+	Reversed       bool
+	Line           int
+	Column         int
 }
 
 func (t *ForTag) node()                   {}
