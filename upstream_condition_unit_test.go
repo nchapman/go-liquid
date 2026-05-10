@@ -70,7 +70,6 @@ func TestUpstream_ConditionUnit_ContainsReturnsFalseForNilOperands(t *testing.T)
 }
 
 func TestUpstream_ConditionUnit_ContainsReturnsFalseForNilOperands_NilRight(t *testing.T) {
-	t.Skip("go-liquid: 'foo' contains <nil> coerces nil to '' and substring-of-anything is true; Ruby returns false")
 	renderEq(t, "nil-r", "{% if 'foo' contains missing %}T{% else %}F{% endif %}", nil, "F")
 }
 
@@ -141,7 +140,6 @@ func TestUpstream_ConditionUnit_BlankWithEmptyHash(t *testing.T) {
 }
 
 func TestUpstream_ConditionUnit_BlankWithNil(t *testing.T) {
-	t.Skip("go-liquid: nil == blank evaluates false; Ruby ActiveSupport-style blank? treats nil as blank")
 	renderEq(t, "nil", "{% if x == blank %}T{% else %}F{% endif %}",
 		map[string]any{"x": nil}, "T")
 }

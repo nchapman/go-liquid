@@ -1547,7 +1547,9 @@ func isFalsy(v any) bool {
 // Empty: nil, empty string, empty array, empty map
 func isEmpty(v any) bool {
 	if v == nil {
-		return true
+		// Ruby: `nil == empty` is false — `empty` matches collections/strings
+		// with zero content, not the absence of a value (that's `blank`).
+		return false
 	}
 	switch val := v.(type) {
 	case string:

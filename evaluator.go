@@ -1220,15 +1220,9 @@ func mapIntKey(obj any, i int, ctx RenderContext) (any, bool) {
 
 // equal checks if two values are equal.
 func equal(a, b any) bool {
-	// Handle nil
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-
-	// Handle special empty/blank values
+	// Special empty/blank literals are checked first so that `nil == blank`
+	// resolves via isBlank (which treats nil as blank) rather than the
+	// generic nil short-circuit below.
 	if _, ok := a.(emptyValue); ok {
 		return isEmpty(b)
 	}
@@ -1240,6 +1234,14 @@ func equal(a, b any) bool {
 	}
 	if _, ok := b.(blankValue); ok {
 		return isBlank(a)
+	}
+
+	// Handle nil
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
 	}
 
 	// Compare numbers
@@ -1299,7 +1301,9 @@ func compare(a, b any) int {
 
 // contains checks if a contains b.
 func contains(a, b any) bool {
-	if a == nil {
+	if a == nil || b == nil {
+		// Ruby returns false for `x contains nil` regardless of x — without
+		// this guard, toString(nil) is "" and "any" contains "" trivially.
 		return false
 	}
 
