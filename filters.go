@@ -1307,9 +1307,25 @@ func toString(v any) string {
 		return strconv.FormatFloat(float64(val), 'g', -1, 32)
 	case []byte:
 		return string(val)
+	case []any:
+		// Matches Ruby's Array#to_s in Liquid render context: each element
+		// stringified and concatenated with no separator (`[1,2,3]` → "123").
+		var b strings.Builder
+		for _, e := range val {
+			b.WriteString(toString(e))
+		}
+		return b.String()
 	case fmt.Stringer:
 		return val.String()
 	default:
+		rv := reflect.ValueOf(val)
+		if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
+			var b strings.Builder
+			for i := range rv.Len() {
+				b.WriteString(toString(rv.Index(i).Interface()))
+			}
+			return b.String()
+		}
 		return fmt.Sprintf("%v", val)
 	}
 }
