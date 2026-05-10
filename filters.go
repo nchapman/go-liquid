@@ -344,9 +344,9 @@ func filterSlice(input any, args ...any) any {
 		runes := []rune(s)
 		if offset < 0 {
 			offset = len(runes) + offset
-		}
-		if offset < 0 {
-			offset = 0
+			if offset < 0 {
+				return ""
+			}
 		}
 		if offset >= len(runes) {
 			return ""
@@ -365,9 +365,9 @@ func filterSlice(input any, args ...any) any {
 
 	if offset < 0 {
 		offset = len(slice) + offset
-	}
-	if offset < 0 {
-		offset = 0
+		if offset < 0 {
+			return []any{}
+		}
 	}
 	if offset >= len(slice) {
 		return []any{}
@@ -544,9 +544,12 @@ func filterWhere(input any, args ...any) any {
 	if len(args) == 0 {
 		return nil
 	}
+	prop := toString(args[0])
+	if prop == "" {
+		return input
+	}
 	slice := toFilterInput(input)
 
-	prop := toString(args[0])
 	var targetValue any = true // default is to check for truthy
 	if len(args) > 1 {
 		targetValue = args[1]
@@ -755,15 +758,11 @@ func compareValues(a, b any) int {
 	case b == nil:
 		return -1
 	}
-	// Try numeric comparison first
-	aNum := toNumber(a)
-	bNum := toNumber(b)
-	if aNum != int64(0) || bNum != int64(0) {
-		aFloat := toFloat(aNum)
-		bFloat := toFloat(bNum)
-		return cmp.Compare(aFloat, bFloat)
+	// Ruby's <=> sorts strings lexicographically — "10" < "2" because '1' < '2'.
+	// Only coerce numerically when both operands are already numeric types.
+	if isNumeric(a) && isNumeric(b) {
+		return cmp.Compare(toFloat(toNumber(a)), toFloat(toNumber(b)))
 	}
-	// Fall back to string comparison
 	return cmp.Compare(toString(a), toString(b))
 }
 
@@ -777,14 +776,11 @@ func equalValues(a, b any) bool {
 		return isFalsy(a)
 	}
 
-	// Try numeric equality
-	aNum := toNumber(a)
-	bNum := toNumber(b)
-	if aNum != int64(0) || bNum != int64(0) {
-		return toFloat(aNum) == toFloat(bNum)
+	// Ruby's == doesn't coerce strings to numbers — "10" != 10.
+	// Only compare numerically when both operands are Go numeric types.
+	if isNumeric(a) && isNumeric(b) {
+		return toFloat(toNumber(a)) == toFloat(toNumber(b))
 	}
-
-	// Fall back to string equality
 	return toString(a) == toString(b)
 }
 

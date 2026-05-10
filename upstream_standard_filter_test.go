@@ -70,7 +70,6 @@ func TestUpstream_StdFilter_Slice(t *testing.T) {
 }
 
 func TestUpstream_StdFilter_Slice_NegativeOutOfBounds(t *testing.T) {
-	t.Skip("go-liquid: slice('foobar', -100, 10) returns 'foobar' (wraps to 0); Ruby clamps to empty")
 	wantStd(t, "{{ 'foobar' | slice: -100, 10 }}", nil, "")
 }
 
@@ -88,7 +87,6 @@ func TestUpstream_StdFilter_SliceOnArrays(t *testing.T) {
 }
 
 func TestUpstream_StdFilter_SliceOnArrays_NegativeOutOfBounds(t *testing.T) {
-	t.Skip("go-liquid: slice(array, -100, 10) returns full array; Ruby clamps to empty")
 	data := map[string]any{"a": []any{"f", "o", "o", "b", "a", "r"}}
 	wantStd(t, "{{ a | slice: -100, 10 | join: '' }}", data, "")
 }
@@ -312,7 +310,6 @@ func TestUpstream_StdFilter_NumericalVsLexicographicalSort(t *testing.T) {
 }
 
 func TestUpstream_StdFilter_NumericalVsLexicographicalSort_Strings(t *testing.T) {
-	t.Skip("go-liquid sort numerically coerces numeric strings; Ruby does pure lexicographical")
 	wantStd(t, "{{ a | sort | join: ',' }}", map[string]any{"a": []any{"10", "2"}}, "10,2")
 	wantStd(t, "{{ a | sort: 'a' | map: 'a' | join: ',' }}",
 		map[string]any{"a": []any{map[string]any{"a": "10"}, map[string]any{"a": "2"}}}, "10,2")
@@ -716,7 +713,6 @@ func TestUpstream_StdFilter_Where(t *testing.T) {
 }
 
 func TestUpstream_StdFilter_WhereWithEmptyStringIsANoOp(t *testing.T) {
-	t.Skip("go-liquid where: '' filters out everything; Ruby treats empty key as no-op (returns input)")
 	wantStd(t, "{{ array | where: '' | join: ' ' }}",
 		map[string]any{"array": []any{"alpha", "beta", "gamma"}}, "alpha beta gamma")
 }

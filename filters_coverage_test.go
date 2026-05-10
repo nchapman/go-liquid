@@ -91,10 +91,10 @@ func TestFiltersComprehensive(t *testing.T) {
 		{"compact removes nil", `{{ a | compact | join: "," }}`, map[string]any{"a": []any{1, nil, 2, nil, 3}}, "1,2,3"},
 		{"sort numbers", `{{ a | sort | join: "," }}`, map[string]any{"a": []any{3, 1, 2}}, "1,2,3"},
 		{"sort_natural mixed case", `{{ a | sort_natural | join: "," }}`, map[string]any{"a": []any{"Banana", "apple", "Cherry"}}, "apple,Banana,Cherry"},
-		// Mixed numeric+string sort: documents current ordering so a future
-		// behavior change can't slip through unnoticed. compareValues falls
-		// to string comparison whenever either side fails to parse as numeric.
-		{"sort mixed types", `{{ a | sort | join: "," }}`, map[string]any{"a": []any{"banana", 1, "apple", 2}}, "apple,banana,1,2"},
+		// Mixed numeric+string sort: Ruby raises ArgumentError on this; go-liquid
+		// falls back to lexicographic string comparison, which puts digits (0x30+)
+		// before lowercase letters (0x60+).
+		{"sort mixed types", `{{ a | sort | join: "," }}`, map[string]any{"a": []any{"banana", 1, "apple", 2}}, "1,2,apple,banana"},
 		{"sum ints", `{{ a | sum }}`, map[string]any{"a": []any{1, 2, 3, 4}}, "10"},
 		{"sum mixed", `{{ a | sum }}`, map[string]any{"a": []any{1, 2.5, "3"}}, "6.5"},
 		{"sum empty", `{{ a | sum }}`, map[string]any{"a": []any{}}, "0"},
