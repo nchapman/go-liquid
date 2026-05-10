@@ -1,6 +1,7 @@
 package liquid
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -217,8 +218,82 @@ func (p *parser) parseTag() (Node, error) {
 	case "doc":
 		return p.parseDocTag()
 	}
+	// Custom tag plugins (RegisterTag / RegisterBlock) — fall through here
+	// before reporting an unknown-tag error, so user code can extend the
+	// language without forking the parser.
+	if node, ok, err := p.parseCustomTag(); ok {
+		return node, err
+	}
 	return nil, newParseError(p.curToken.line, p.curToken.column,
 		"unknown tag: %q", p.curToken.literal)
+}
+
+// parseCustomTag dispatches to a registered TagParser for the current tag
+// name. Returns ok=false if no plugin is registered, leaving the caller to
+// emit its standard "unknown tag" error. On success, the markup string from
+// just past the tag name to the closing %} is handed to the registered
+// parser; for block tags, the body is then parsed up to {% endNAME %}.
+func (p *parser) parseCustomTag() (Node, bool, error) {
+	name := p.curToken.literal
+	parse, isBlock, ok := lookupCustomTag(name)
+	if !ok {
+		return nil, false, nil
+	}
+	line, column := p.curToken.line, p.curToken.column
+
+	// Mirror parseLiquidTag's lexer handoff: l.pos is one byte past the
+	// tag name, so flipping the lexer to text mode and calling
+	// scanToTagClose captures exactly the raw markup the plugin needs.
+	p.l.mode = modeText
+	markup, trimRight, closed := p.l.scanToTagClose(true)
+	if !closed {
+		return nil, true, newParseError(line, column,
+			"unterminated {%% %s ... %%}: expected %%}", name)
+	}
+	p.trimNextText = trimRight
+	p.nextToken() // refresh curToken from past the closing %}
+
+	renderer, err := parse(markup)
+	if err != nil {
+		return nil, true, &ParseError{
+			Message: fmt.Sprintf("tag %q: %v", name, err),
+			Line:    line,
+			Column:  column,
+		}
+	}
+
+	if !isBlock {
+		return &customTagNode{
+			name:     name,
+			renderer: renderer,
+			line:     line,
+			column:   column,
+		}, true, nil
+	}
+
+	endTag := "end" + name
+	body, err := p.parseNodes(func() bool {
+		return p.isTagKeyword(endTag)
+	})
+	if err != nil {
+		return nil, true, err
+	}
+	if !p.isTagKeyword(endTag) {
+		return nil, true, newParseError(p.curToken.line, p.curToken.column,
+			"expected %s", endTag)
+	}
+	p.nextToken() // {%
+	p.nextToken() // endNAME
+	if err := p.expectTagClose(); err != nil {
+		return nil, true, err
+	}
+	return &customBlockNode{
+		name:     name,
+		renderer: renderer,
+		body:     body,
+		line:     line,
+		column:   column,
+	}, true, nil
 }
 
 // parseTablerowTag handles

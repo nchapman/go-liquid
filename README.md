@@ -58,6 +58,36 @@ liquid.RegisterFilter("shout", func(input any, _ ...any) any {
 })
 ```
 
+### Custom tags
+
+Both inline (`{% mytag … %}`) and block (`{% mytag … %}body{% endmytag %}`)
+tags are supported. The parser hands you the raw markup; you return a
+renderer that runs at template evaluation time.
+
+```go
+type uppercaseBlock struct{}
+
+func (uppercaseBlock) Render(w io.Writer, ctx liquid.TagContext) error {
+    var buf strings.Builder
+    if err := ctx.RenderBody(&buf); err != nil {
+        return err
+    }
+    _, err := io.WriteString(w, strings.ToUpper(buf.String()))
+    return err
+}
+
+liquid.RegisterBlock("uppercase", func(markup string) (liquid.TagRenderer, error) {
+    return uppercaseBlock{}, nil
+})
+
+// {% uppercase %}hello {{ name }}{% enduppercase %}  →  HELLO WORLD
+```
+
+`TagContext` exposes `Get` / `Assign` / `PushScope(fn)` for working with the
+scope chain (use `PushScope` to make assigns local to the block, like Ruby
+Liquid's `context.stack`). Registration is global and not safe to call
+concurrently with rendering — register at startup.
+
 ## Supported syntax
 
 **Output and filters**
@@ -135,17 +165,17 @@ Render benchmark uses a 100-element loop with conditionals, filters, and propert
 
 `go test -bench=Shopify` runs a port of Shopify/liquid's
 [`performance/benchmark.rb`](https://github.com/Shopify/liquid/blob/main/performance/benchmark.rb)
-— 18 page templates across 4 real Shopify themes, wrapped in their
-`theme.liquid` layouts, against the same `vision.database.yml` fixture. The 12
-templates that use `{% paginate %}` / `{% form %}` are skipped (custom Block
-tags, not yet supported).
+— 30 page templates across 4 real Shopify themes, wrapped in their
+`theme.liquid` layouts, against the same `vision.database.yml` fixture.
+`{% paginate %}` and `{% form %}` are registered as block tags via the
+public `RegisterBlock` API (see _Custom tags_ above).
 
 Wall time on the same Apple M4 Max:
 
 | Phase  | go-liquid (per template) | Shopify/liquid (Ruby 3.4 + YJIT) | Ratio |
 |--------|--------------------------|----------------------------------|-------|
-| Parse  | ~11 µs                   | ~100 µs                          | ~9×   |
-| Render | ~15 µs                   | ~44 µs                           | ~3×   |
+| Parse  | ~12 µs                   | ~100 µs                          | ~8×   |
+| Render | ~20 µs                   | ~44 µs                           | ~2×   |
 
 Reproduce the Ruby side:
 
@@ -163,8 +193,9 @@ fine for throughput comparison, not for output diffing.
 ## Status
 
 Tests cover the standard Liquid surface used by Jekyll/Hugo-style templates,
-including `{% include %}` and `{% render %}` partials via a pluggable `Loader`.
-Drops and custom tag plugins are not implemented yet.
+including `{% include %}` and `{% render %}` partials via a pluggable
+`Loader` and custom tags via `RegisterTag` / `RegisterBlock`. Drops are not
+implemented yet.
 
 ## License
 

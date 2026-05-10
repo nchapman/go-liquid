@@ -199,6 +199,12 @@ func (e *evaluator) evalNodeInner(w io.Writer, node Node) error {
 	case *DocTag:
 		return nil
 
+	case *customTagNode:
+		return n.renderer.Render(w, &tagCtx{ev: e})
+
+	case *customBlockNode:
+		return n.renderer.Render(w, &tagCtx{ev: e, body: n.body})
+
 	default:
 		return nil
 	}

@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -352,6 +353,159 @@ func registerShopifyFilters(tb testing.TB) {
 	})
 }
 
+// shopifyTagsOnce guards RegisterBlock calls so re-running the bench in the
+// same process doesn't double-register (RegisterBlock panics on collision
+// only against built-ins, but re-registering would silently mask earlier
+// state — sync.Once keeps the harness deterministic).
+var shopifyTagsOnce sync.Once
+
+// registerShopifyTags installs the {% paginate %} and {% form %} block tags
+// used by the Shopify benchmark. Behavior mirrors performance/shopify/
+// {paginate,comment_form}.rb closely enough to render the templates — exact
+// pagination math is not needed for benchmarking throughput.
+func registerShopifyTags(tb testing.TB) {
+	shopifyTagsOnce.Do(func() {
+		// {% paginate COLLECTION by N %}…{% endpaginate %}
+		// Stub: assigns a `paginate` map with sensible fixed values, then
+		// renders the body. Mirrors the Ruby stub which also assigns a
+		// largely fixed hash regardless of input.
+		paginateRE := regexp.MustCompile(`^\s*([\w.]+)\s+by\s+(\d+)`)
+		RegisterBlock("paginate", func(markup string) (TagRenderer, error) {
+			m := paginateRE.FindStringSubmatch(markup)
+			if m == nil {
+				return nil, fmt.Errorf("paginate: expected `COLLECTION by N`, got %q", markup)
+			}
+			pageSize, _ := strconvAtoi(m[2])
+			return &paginateBlock{collectionPath: m[1], pageSize: pageSize}, nil
+		})
+
+		// {% form ARTICLE %}…{% endform %} — wraps body in a comment form
+		// element. Mirrors performance/shopify/comment_form.rb.
+		RegisterBlock("form", func(markup string) (TagRenderer, error) {
+			name := strings.TrimSpace(markup)
+			if name == "" {
+				return nil, fmt.Errorf("form: missing variable name")
+			}
+			return &formBlock{varName: name}, nil
+		})
+	})
+}
+
+type paginateBlock struct {
+	collectionPath string
+	pageSize       int
+}
+
+func (b *paginateBlock) Render(w io.Writer, ctx TagContext) error {
+	collection := lookupPath(ctx, b.collectionPath)
+	collectionSize := sizeOf(collection)
+	pageCount := 1
+	if b.pageSize > 0 {
+		pageCount = (collectionSize+b.pageSize-1)/b.pageSize + 1
+	}
+	currentPage := 1
+
+	parts := make([]any, 0, pageCount)
+	for i := 1; i < pageCount; i++ {
+		title := fmt.Sprintf("%d", i)
+		isCurrent := i == currentPage
+		if isCurrent {
+			parts = append(parts, map[string]any{"title": title, "is_link": false})
+		} else {
+			parts = append(parts, map[string]any{
+				"title":   title,
+				"url":     fmt.Sprintf("/collections/frontpage?page=%d", i),
+				"is_link": true,
+			})
+		}
+	}
+
+	paginate := map[string]any{
+		"page_size":      b.pageSize,
+		"current_page":   currentPage,
+		"current_offset": b.pageSize * (currentPage - 1),
+		"items":          collectionSize,
+		"pages":          pageCount - 1,
+		"parts":          parts,
+		"previous":       nil,
+		"next":           nil,
+	}
+	if pageCount > currentPage+1 {
+		paginate["next"] = map[string]any{
+			"title":   "Next &raquo;",
+			"url":     fmt.Sprintf("/collections/frontpage?page=%d", currentPage+1),
+			"is_link": true,
+		}
+	}
+
+	return ctx.PushScope(func() error {
+		ctx.Assign("paginate", paginate)
+		return ctx.RenderBody(w)
+	})
+}
+
+type formBlock struct {
+	varName string
+}
+
+func (b *formBlock) Render(w io.Writer, ctx TagContext) error {
+	article := lookupPath(ctx, b.varName)
+	id := ""
+	if m, ok := article.(map[string]any); ok {
+		id = fmt.Sprint(m["id"])
+	}
+	if _, err := fmt.Fprintf(w, `<form id="article-%s-comment-form" class="comment-form" method="post" action="">`+"\n", id); err != nil {
+		return err
+	}
+	err := ctx.PushScope(func() error {
+		ctx.Assign("form", map[string]any{
+			"posted_successfully?": false,
+			"errors":               nil,
+			"author":               "",
+			"email":                "",
+			"body":                 "",
+		})
+		return ctx.RenderBody(w)
+	})
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, "\n</form>")
+	return err
+}
+
+// lookupPath resolves dotted names like `collection.products` against the
+// active scope chain. Custom tags don't get the parser's expression engine,
+// so we walk the path manually using whatever the data model exposes.
+func lookupPath(ctx TagContext, path string) any {
+	parts := strings.Split(path, ".")
+	cur := ctx.Get(parts[0])
+	for _, p := range parts[1:] {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil
+		}
+		cur = m[p]
+	}
+	return cur
+}
+
+func sizeOf(v any) int {
+	switch x := v.(type) {
+	case []any:
+		return len(x)
+	case map[string]any:
+		return len(x)
+	default:
+		return 0
+	}
+}
+
+// strconvAtoi is the standard library's; aliased here to keep imports tidy.
+func strconvAtoi(s string) (int, error) {
+	return strconv.Atoi(s)
+}
+
 var productImgURLRE = regexp.MustCompile(`^products/([\w\-_]+)\.(\w{2,4})`)
 
 func numAsFloat(v any) (float64, bool) {
@@ -401,17 +555,16 @@ type shopifyTemplate struct {
 	tmpl   *Template // theme layout, parsed once
 }
 
-// loadShopifyTemplates discovers all (theme, page) pairs, skipping templates
-// that use {% paginate %} or {% form %} (custom Block tags not implemented).
+// loadShopifyTemplates discovers all (theme, page) pairs across all themes.
 func loadShopifyTemplates(tb testing.TB) []shopifyTemplate {
 	registerShopifyFilters(tb)
+	registerShopifyTags(tb)
 
 	themes, err := os.ReadDir(shopifyBenchRoot)
 	if err != nil {
 		tb.Fatalf("read shopify_bench: %v", err)
 	}
 
-	skip := regexp.MustCompile(`\{%\s*(paginate|form)\b`)
 	var out []shopifyTemplate
 	for _, th := range themes {
 		if !th.IsDir() {
@@ -439,9 +592,6 @@ func loadShopifyTemplates(tb testing.TB) []shopifyTemplate {
 			src, err := os.ReadFile(p)
 			if err != nil {
 				tb.Fatalf("read %s: %v", p, err)
-			}
-			if skip.Match(src) {
-				continue
 			}
 			page, err := Parse(string(src))
 			if err != nil {
