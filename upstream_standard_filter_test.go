@@ -806,7 +806,9 @@ func TestUpstream_StdFilter_Date(t *testing.T) {
 }
 
 func TestUpstream_StdFilter_Date_EmptyFormatReturnsISO(t *testing.T) {
-	t.Skip("go-liquid returns empty for date(x, '') and date(x, nil); Ruby returns the parsed time's default ISO string")
+	// Ruby's date filter short-circuits on empty/nil format and returns
+	// input unchanged. The "ISO string" mention in the prior skip was
+	// misleading — Ruby returns the input string verbatim.
 	wantStd(t, "{{ '2006-07-05 10:00:00' | date: '' }}", nil, "2006-07-05 10:00:00")
 	wantStd(t, "{{ '2006-07-05 10:00:00' | date: nil }}", nil, "2006-07-05 10:00:00")
 }

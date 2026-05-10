@@ -129,6 +129,15 @@ func (p *parser) parseNodeWithTrim() (node Node, trimLeft, trimRight bool, err e
 	case tokenOutputOpen, tokenOutputTrim:
 		trimLeft = p.curToken.typ == tokenOutputTrim
 		node, trimRight, err = p.parseOutputWithTrim()
+		// Ruby quirk: `{{-}}` — `{{-` immediately followed by `}}` with no
+		// body — trims BOTH sides. Ruby's whitespace_handler looks at
+		// token[-3], which for the 5-char `{{-}}` is the `-`, so trim_right
+		// becomes true. We mirror that here.
+		if trimLeft && !trimRight {
+			if o, ok := node.(*OutputNode); ok && o != nil && o.Expr == nil {
+				trimRight = true
+			}
+		}
 		return node, trimLeft, trimRight, err
 	case tokenTagOpen, tokenTagTrim:
 		trimLeft = p.curToken.typ == tokenTagTrim

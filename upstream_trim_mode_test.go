@@ -242,6 +242,5 @@ func TestUpstream_TrimMode_BugCompatiblePreTrim(t *testing.T) {
 }
 
 func TestUpstream_TrimMode_TrimBlank(t *testing.T) {
-	t.Skip("go-liquid does not recognize '{{-}}' (empty output with trim markers) as a whitespace-trimming no-op")
 	renderEq(t, "trim-empty", "foo {{-}} bar", nil, "foobar")
 }

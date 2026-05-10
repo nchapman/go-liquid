@@ -1002,6 +1002,11 @@ func filterDate(input any, args ...any) any {
 	}
 
 	format := toString(args[0])
+	// Ruby parity: an empty/nil format returns the input unchanged
+	// (standardfilters.rb#date short-circuits on str_format.empty?).
+	if format == "" {
+		return input
+	}
 
 	// Parse the input as a time. Mirrors Ruby's Utils.to_date: accepts
 	// time values, the literal strings "now"/"today" (current time),

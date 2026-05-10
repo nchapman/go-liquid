@@ -18,8 +18,11 @@ func TestUpstream_VariableUnit_Filters(t *testing.T) {
 }
 
 func TestUpstream_VariableUnit_Filters_StrftimeOnNonDate(t *testing.T) {
-	t.Skip("Ruby strftime on non-date string returns ''; go-liquid passes through unknown 'strftime' as no-op (input unchanged)")
-	renderEq(t, "3", "{{ hello | strftime: '%Y'}}", map[string]any{"hello": "now"}, "")
+	// The Ruby source is a parse-time check that `var.filters == [['strftime', ['%Y']]]`,
+	// not a render assertion. go-liquid has no Variable#filters AST exposure, so we
+	// assert the closest behavioral equivalent: parsing+rendering an unknown filter
+	// passes the input through unchanged.
+	renderEq(t, "strftime", "{{ hello | strftime: '%Y'}}", map[string]any{"hello": "now"}, "now")
 }
 
 func TestUpstream_VariableUnit_FilterWithDateParameter(t *testing.T) {
