@@ -78,7 +78,14 @@ func newEvaluator(data map[string]any) *evaluator {
 
 // evaluate writes the template's rendered output to w.
 func (e *evaluator) evaluate(w io.Writer, tmpl *templateAST) error {
-	return e.evalNodes(w, tmpl.nodes)
+	err := e.evalNodes(w, tmpl.nodes)
+	// `{% break %}` / `{% continue %}` outside any loop are no-ops at the top
+	// level: break short-circuits the rest of the template (output already
+	// written is preserved), continue is silently swallowed. Matches upstream.
+	if errors.Is(err, errBreak) || errors.Is(err, errContinue) {
+		return nil
+	}
+	return err
 }
 
 // evalNodes renders each node into w in order, propagating the first
@@ -124,6 +131,9 @@ func (e *evaluator) evalNodeInner(w io.Writer, node Node) error {
 		return err
 
 	case *OutputNode:
+		if n.Expr == nil {
+			return nil // {{}} renders the empty string
+		}
 		val, err := e.evalExpr(n.Expr)
 		if err != nil {
 			return err
@@ -508,11 +518,15 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 		collection = items
 	}
 
-	// Liquid treats a string as a single iteration item, not a sequence of
-	// characters (toSlice splits strings for filter use). Match Shopify.
+	// Liquid treats a non-empty string as a single iteration item, not a
+	// sequence of characters (toSlice splits strings for filter use). An
+	// empty/blank string is non-iterable — zero iterations — to match
+	// upstream's `blank_string_not_iterable` behavior.
 	var items []any
 	if s, ok := collection.(string); ok {
-		items = []any{s}
+		if s != "" {
+			items = []any{s}
+		}
 	} else {
 		items = toSlice(collection)
 	}
@@ -754,14 +768,22 @@ func (e *evaluator) evalBinaryExpr(expr *BinaryExpr) (any, error) {
 		return equal(left, right), nil
 	case "!=":
 		return !equal(left, right), nil
-	case "<":
-		return compare(left, right) < 0, nil
-	case ">":
-		return compare(left, right) > 0, nil
-	case "<=":
-		return compare(left, right) <= 0, nil
-	case ">=":
-		return compare(left, right) >= 0, nil
+	case "<", ">", "<=", ">=":
+		// Relational operators against nil are always false in upstream
+		// Liquid (incompatible types). Equality operators above still apply.
+		if left == nil || right == nil {
+			return false, nil
+		}
+		switch expr.Operator {
+		case "<":
+			return compare(left, right) < 0, nil
+		case ">":
+			return compare(left, right) > 0, nil
+		case "<=":
+			return compare(left, right) <= 0, nil
+		default: // ">="
+			return compare(left, right) >= 0, nil
+		}
 	case "contains":
 		return contains(left, right), nil
 	default:
@@ -866,8 +888,16 @@ func getPropertyOK(obj any, prop string) (any, bool) {
 	}
 
 	if m, ok := obj.(map[string]any); ok {
-		v, present := m[prop]
-		return v, present
+		if v, present := m[prop]; present {
+			return v, true
+		}
+		// Fall through to special-property handling so `hash.size` (etc.) works
+		// when the map has no literal entry for that name. An explicit map entry
+		// shadows the built-in.
+		if prop == "size" {
+			return len(m), true
+		}
+		return nil, false
 	}
 
 	switch prop {
@@ -904,6 +934,9 @@ func getPropertyOK(obj any, prop string) (any, bool) {
 		val := rv.MapIndex(key)
 		if val.IsValid() {
 			return val.Interface(), true
+		}
+		if prop == "size" {
+			return rv.Len(), true
 		}
 	}
 

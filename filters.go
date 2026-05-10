@@ -1159,6 +1159,11 @@ func toString(v any) string {
 		return ""
 	}
 	switch val := v.(type) {
+	case emptyValue, blankValue:
+		// `empty` / `blank` literals render as "" (matches upstream).
+		// They retain identity for == comparisons (see `equal`).
+		_ = val
+		return ""
 	case string:
 		return val
 	case bool:

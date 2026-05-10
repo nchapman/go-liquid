@@ -32,12 +32,10 @@ func TestUpstream_ParsingQuirks(t *testing.T) {
 	})
 
 	t.Run("blank_variable_markup_is_empty", func(t *testing.T) {
-		t.Skip("gap: upstream renders empty string for `{{}}`; go-liquid raises a parse error")
 		renderEq(t, "{{}}", "{{}}", nil, "")
 	})
 
 	t.Run("lookup_on_var_with_literal_name_blank", func(t *testing.T) {
-		t.Skip("gap: upstream treats `blank` as an identifier when followed by . or []; go-liquid resolves it as the blank literal")
 		data := map[string]any{"blank": map[string]any{"x": "result"}}
 		renderEq(t, "blank.x", "{{ blank.x }}", data, "result")
 		renderEq(t, "blank['x']", "{{ blank['x'] }}", data, "result")
@@ -84,9 +82,8 @@ func TestUpstream_Variable(t *testing.T) {
 		{"false_literal_renders_as_false", "{{ false }}", nil, "false"},
 		{"nil_renders_empty", "{{ nil }}", nil, ""},
 		{"nil_through_filter", "{{ nil | append: 'cat' }}", nil, "cat"},
-		// gap: upstream coerces the blank/empty literal to "" on render; go-liquid renders the literal name.
-		// {"using_blank_as_variable_name", "{% assign foo = blank %}{{ foo }}", nil, ""},
-		// {"using_empty_as_variable_name", "{% assign foo = empty %}{{ foo }}", nil, ""},
+		{"using_blank_as_variable_name", "{% assign foo = blank %}{{ foo }}", nil, ""},
+		{"using_empty_as_variable_name", "{% assign foo = empty %}{{ foo }}", nil, ""},
 		{"multiline_variable", "{{\ntest\n}}", map[string]any{"test": "worked"}, "worked"},
 		{"bracket_with_inner_whitespace", "{{ a[ 'b' ] }}", map[string]any{"a": map[string]any{"b": "result"}}, "result"},
 		{"ignore_unknown", "{{ test }}", nil, ""},
@@ -129,7 +126,6 @@ func TestUpstream_ForTag(t *testing.T) {
 	})
 
 	t.Run("blank_string_not_iterable", func(t *testing.T) {
-		t.Skip("gap: upstream treats blank string as non-iterable for {% for %}; go-liquid iterates over runes")
 		src := "{% for char in characters %}I WILL NOT BE OUTPUT{% endfor %}"
 		renderEq(t, "blank-string", src, map[string]any{"characters": ""}, "")
 	})
@@ -196,7 +192,6 @@ func TestUpstream_Raw(t *testing.T) {
 	})
 
 	t.Run("unclosed_raw_errors", func(t *testing.T) {
-		t.Skip("gap: upstream raises a parse error for unclosed `{% raw %}`; go-liquid silently consumes to EOF")
 		if _, err := Parse("{% raw %} foo"); err == nil {
 			t.Fatal("expected parse error for unclosed raw")
 		}
@@ -303,7 +298,6 @@ func TestUpstream_Tablerow(t *testing.T) {
 
 func TestUpstream_BreakContinueOutsideLoop(t *testing.T) {
 	t.Run("break_with_no_block_renders_prefix", func(t *testing.T) {
-		t.Skip("gap: upstream renders `before` and stops; go-liquid surfaces the break sentinel as a render error")
 		out, err := Render("before{% break %}after", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -314,7 +308,6 @@ func TestUpstream_BreakContinueOutsideLoop(t *testing.T) {
 	})
 
 	t.Run("continue_with_no_block_renders_empty", func(t *testing.T) {
-		t.Skip("gap: upstream renders empty string; go-liquid surfaces the continue sentinel as a render error")
 		out, err := Render("{% continue %}", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -339,9 +332,8 @@ func TestUpstream_Statements(t *testing.T) {
 		{"one_gt_zero", " {% if 1 > 0 %} true {% else %} false {% endif %} ", nil, "  true  "},
 		{"zero_lt_one", " {% if 0 < 1 %} true {% else %} false {% endif %} ", nil, "  true  "},
 		{"zero_lte_zero", " {% if 0 <= 0 %} true {% else %} false {% endif %} ", nil, "  true  "},
-		// gap: upstream returns false for nil <= number (incompatible types); go-liquid coerces nil to 0 and returns true.
-		// {"null_lte_zero", " {% if null <= 0 %} true {% else %} false {% endif %} ", nil, "  false  "},
-		// {"zero_lte_null", " {% if 0 <= null %} true {% else %} false {% endif %} ", nil, "  false  "},
+		{"null_lte_zero", " {% if null <= 0 %} true {% else %} false {% endif %} ", nil, "  false  "},
+		{"zero_lte_null", " {% if 0 <= null %} true {% else %} false {% endif %} ", nil, "  false  "},
 		{"zero_gte_zero", " {% if 0 >= 0 %} true {% else %} false {% endif %} ", nil, "  true  "},
 		{"strings_eq", " {% if 'test' == 'test' %} true {% else %} false {% endif %} ", nil, "  true  "},
 		{"strings_neq", " {% if 'test' != 'test' %} true {% else %} false {% endif %} ", nil, "  false  "},
@@ -373,10 +365,11 @@ func TestUpstream_CaseWhen(t *testing.T) {
 	})
 
 	t.Run("when_with_or", func(t *testing.T) {
-		t.Skip("gap: upstream supports `{% when 1 or 2 or 3 %}`; go-liquid only matches the first listed value")
 		src := "{% case x %}{% when 1 or 2 or 3 %}low{% when 4 %}four{% endcase %}"
 		renderEq(t, "or-1", src, map[string]any{"x": 1}, "low")
 		renderEq(t, "or-2", src, map[string]any{"x": 2}, "low")
+		renderEq(t, "or-3", src, map[string]any{"x": 3}, "low")
+		renderEq(t, "or-4", src, map[string]any{"x": 4}, "four")
 	})
 
 	t.Run("case_on_size", func(t *testing.T) {
@@ -417,7 +410,6 @@ func TestUpstream_StandardTagExtras(t *testing.T) {
 	})
 
 	t.Run("size_of_hash", func(t *testing.T) {
-		t.Skip("gap: upstream supports `.size` on hashes; go-liquid only resolves it on arrays/strings")
 		renderEq(t, "size-hash", "hash has {{ hash.size }} elements",
 			map[string]any{"hash": map[string]any{"a": 1, "b": 2, "c": 3, "d": 4}},
 			"hash has 4 elements")

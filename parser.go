@@ -135,9 +135,15 @@ func (p *parser) parseOutputWithTrim() (Node, bool, error) {
 	column := p.curToken.column
 	p.nextToken()
 
-	expr, err := p.parseExpression()
-	if err != nil {
-		return nil, false, err
+	// Empty output `{{}}` (and `{{- -}}`) is permitted by upstream Liquid and
+	// renders the empty string. Skip expression parsing in that case.
+	var expr Expression
+	if p.curToken.typ != tokenOutputClose && p.curToken.typ != tokenOutputTrimR {
+		var err error
+		expr, err = p.parseExpression()
+		if err != nil {
+			return nil, false, err
+		}
 	}
 
 	trimRight := p.curToken.typ == tokenOutputTrimR
@@ -756,19 +762,25 @@ func (p *parser) parseCaseTag() (Node, error) {
 		p.nextToken() // consume {%
 		p.nextToken() // consume when
 
+		// `when` accepts multiple values separated by either `,` or `or`:
+		// `{% when 1, 2, 3 %}` and `{% when 1 or 2 or 3 %}` both match any
+		// of the listed values. Parse below the logical-operator layer so
+		// `or` is consumed here as a separator rather than folded into the
+		// expression.
 		var values []Expression
 		for {
 			var val Expression
-			val, err = p.parseExpression()
+			val, err = p.parseContains()
 			if err != nil {
 				return nil, err
 			}
 			values = append(values, val)
 
-			if p.curToken.typ != tokenComma {
-				break
+			if p.curToken.typ == tokenComma || p.curToken.typ == tokenOr {
+				p.nextToken()
+				continue
 			}
-			p.nextToken() // consume comma
+			break
 		}
 
 		err = p.expectTagClose()
@@ -1104,7 +1116,10 @@ func (p *parser) parseRawTag() (Node, error) {
 
 	// Set lexer to text mode and scan to endraw
 	p.l.mode = modeText
-	content, _, _, trimRight := p.l.scanRawBlock()
+	content, _, _, trimRight, closed := p.l.scanRawBlock()
+	if !closed {
+		return nil, newParseError(line, column, "unterminated {%% raw %%} block")
+	}
 	p.trimNextText = trimRight // propagate closing tag's trim state
 	p.nextToken()              // refresh cur token
 
@@ -1573,12 +1588,21 @@ func (p *parser) parseAtom() (Expression, error) {
 		p.nextToken()
 		return &LiteralExpr{Value: nil, Line: line, Column: column}, nil
 
-	case tokenEmpty:
+	case tokenEmpty, tokenBlank:
+		// `blank` and `empty` normally resolve to the special literal sentinels.
+		// Upstream allows them to be used as identifiers when followed by a
+		// member-access (`.`) or index (`[`) — `{{ blank.x }}` looks up a
+		// variable named `blank`. Emit an IdentExpr in that case; parsePrimary's
+		// loop will then attach the Dot/Index chain.
+		name := p.curToken.literal
+		isEmpty := p.curToken.typ == tokenEmpty
 		p.nextToken()
-		return &LiteralExpr{Value: emptyValue{}, Line: line, Column: column}, nil
-
-	case tokenBlank:
-		p.nextToken()
+		if p.curToken.typ == tokenDot || p.curToken.typ == tokenLBracket {
+			return &IdentExpr{Name: name, Line: line, Column: column}, nil
+		}
+		if isEmpty {
+			return &LiteralExpr{Value: emptyValue{}, Line: line, Column: column}, nil
+		}
 		return &LiteralExpr{Value: blankValue{}, Line: line, Column: column}, nil
 
 	case tokenLParen:

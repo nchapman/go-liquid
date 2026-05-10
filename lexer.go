@@ -556,8 +556,9 @@ func isDigit(ch byte) bool {
 }
 
 // scanRawBlock scans until we find {% endraw %} or {%- endraw -%} and returns the raw content.
-// Called after {% raw %} has been parsed. Returns (content, line, col, trimRight).
-func (l *lexer) scanRawBlock() (string, int, int, bool) {
+// Called after {% raw %} has been parsed. Returns (content, line, col, trimRight, closed)
+// where closed reports whether the matching endraw was found before EOF.
+func (l *lexer) scanRawBlock() (string, int, int, bool, bool) {
 	startPos := l.pos
 	startLine := l.line
 	startCol := l.column
@@ -597,7 +598,7 @@ func (l *lexer) scanRawBlock() (string, int, int, bool) {
 					l.readChar() // %
 					l.readChar() // }
 					l.mode = modeText
-					return l.input[startPos:savePos], startLine, startCol, trimRight
+					return l.input[startPos:savePos], startLine, startCol, trimRight, true
 				}
 			}
 
@@ -608,7 +609,7 @@ func (l *lexer) scanRawBlock() (string, int, int, bool) {
 	}
 
 	// EOF reached without finding endraw
-	return l.input[startPos:l.pos], startLine, startCol, false
+	return l.input[startPos:l.pos], startLine, startCol, false, false
 }
 
 // matchAhead checks if the next n characters match the given string.
