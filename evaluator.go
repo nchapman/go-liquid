@@ -1,6 +1,7 @@
 package liquid
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -60,7 +61,8 @@ func (e *evaluator) evalNode(node Node) (string, error) {
 	// bare error; deeper sites (filter, partial) already wrap at finer
 	// positions and wrapAtNode is a no-op for *RenderError. errBreak and
 	// errContinue are control-flow signals, not errors — leave them alone.
-	if err != nil && err != errBreak && err != errContinue {
+	// Use errors.Is so a future wrapper can't accidentally swallow them.
+	if err != nil && !errors.Is(err, errBreak) && !errors.Is(err, errContinue) {
 		err = wrapAtNode(node, err, e.templateName)
 	}
 	return out, err
@@ -527,10 +529,10 @@ func (e *evaluator) evalForTag(tag *ForTag) (string, error) {
 		e.ctx.set("forloop", newForloop(i, length, loopName, parent))
 
 		result, err := e.evalNodes(tag.Body)
-		if err == errBreak {
+		if errors.Is(err, errBreak) {
 			break
 		}
-		if err == errContinue {
+		if errors.Is(err, errContinue) {
 			continue
 		}
 		if err != nil {
@@ -1140,12 +1142,12 @@ func (e *evaluator) evalTablerowTag(tag *TablerowTag) (string, error) {
 
 		fmt.Fprintf(&sb, "<td class=\"col%d\">", col)
 		body, err := e.evalNodes(tag.Body)
-		if err == errBreak {
+		if errors.Is(err, errBreak) {
 			sb.WriteString(body)
 			sb.WriteString("</td>")
 			break
 		}
-		if err == errContinue {
+		if errors.Is(err, errContinue) {
 			sb.WriteString(body)
 			sb.WriteString("</td>")
 			if colLast && !isLast {

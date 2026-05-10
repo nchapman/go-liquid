@@ -23,6 +23,19 @@
 //
 // Data may be a map[string]any, any other map keyed by a stringable type, or a
 // struct. Struct fields and zero-arg methods are accessible via dot notation.
+//
+// # Method auto-invocation and the Drop interface
+//
+// When a template accesses obj.foo on a struct value, the engine first looks
+// for a Foo field, then for a zero-argument method whose return signature
+// looks like a data accessor — either a single non-error return, or
+// (T, error). Methods whose only return is error (and other multi-value
+// shapes) are NOT invoked, on the theory that they're side-effecting
+// (Close, Save, Delete) and silent execution would be unsafe. This is a
+// reasonable default for data DTOs but can surprise authors who expose
+// methods like Token() string or APIKey() string on a model: those WILL
+// be reachable from a template. To opt out per-type, implement the Drop
+// interface — LiquidLookup is consulted instead of reflection.
 package liquid
 
 import (
