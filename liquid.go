@@ -120,9 +120,9 @@ func (t *Template) Render(data any, opts ...RenderOption) (string, error) {
 		opt(&o)
 	}
 	eval := newEvaluator(toStringMap(data))
-	eval.partials = t.partials.Load()
-	eval.strictVariables = o.strictVariables
-	eval.strictFilters = o.strictFilters
+	eval.cfg.partials = t.partials.Load()
+	eval.cfg.strictVariables = o.strictVariables
+	eval.cfg.strictFilters = o.strictFilters
 	eval.templateName = t.name
 	return eval.evaluate(t.ast)
 }

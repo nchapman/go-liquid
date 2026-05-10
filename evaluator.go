@@ -16,25 +16,56 @@ const maxPartialDepth = 100
 // attacker-controlled endpoints cannot trigger an unbounded allocation.
 const maxRangeSize = 1_000_000
 
-// evaluator executes a parsed template.
+// renderConfig is the immutable-per-render configuration: the loader's
+// partial cache plus the strict-mode flags. Inherited verbatim across
+// {% render %} and {% include %} so a partial sees the same loader and
+// strictness as the root template.
+type renderConfig struct {
+	partials        *partialCache
+	strictVariables bool
+	strictFilters   bool
+}
+
+// registers holds per-render scratch state — the Shopify-Liquid concept
+// of context.registers. {% include %} shares the caller's registers (so
+// {% cycle %} positions, {% increment %}/{% decrement %} counters, and
+// the {% ifchanged %} slot all propagate). {% render %} starts with a
+// fresh set: an isolated partial cannot mutate caller state.
+//
+// partialDepth is intentionally NOT a register: it tracks recursion depth
+// for the cycle-detection cap and must propagate across both shared
+// (include) and isolated (render) boundaries, so it lives on the
+// evaluator directly.
+type registers struct {
+	cycle         map[string]int
+	counter       map[string]int
+	ifchangedLast string
+	ifchangedSet  bool
+}
+
+func newRegisters() *registers {
+	return &registers{
+		cycle:   map[string]int{},
+		counter: map[string]int{},
+	}
+}
+
+// evaluator executes a parsed template. cfg is per-Render and shared
+// with partials; regs is per-evaluator (fresh for {% render %}, shared
+// for {% include %}); ctx is the live scope chain.
 type evaluator struct {
-	ctx             *context
-	cycleCounters   map[string]int // cycle position for each group
-	counterVars     map[string]int // increment/decrement counters
-	ifchangedLast   string         // last value emitted by ANY {% ifchanged %}
-	ifchangedSet    bool           // whether ifchangedLast has ever been set
-	partials        *partialCache  // nil if no loader configured
-	partialDepth    int            // current depth through render/include
-	strictVariables bool           // error on undefined identifier
-	strictFilters   bool           // error on unknown filter name
-	templateName    string         // optional, surfaced on RenderError
+	cfg          *renderConfig
+	regs         *registers
+	ctx          *context
+	templateName string // optional, surfaced on RenderError; varies per partial
+	partialDepth int
 }
 
 func newEvaluator(data map[string]any) *evaluator {
 	return &evaluator{
-		ctx:           newContext(data),
-		cycleCounters: make(map[string]int),
-		counterVars:   make(map[string]int),
+		cfg:  &renderConfig{},
+		regs: newRegisters(),
+		ctx:  newContext(data),
 	}
 }
 
@@ -274,10 +305,10 @@ func (e *evaluator) evalIncludeTag(tag *IncludeTag) (string, error) {
 }
 
 func (e *evaluator) loadPartial(name string) (*Template, error) {
-	if e.partials == nil {
+	if e.cfg.partials == nil {
 		return nil, fmt.Errorf("no loader configured: cannot resolve partial %q", name)
 	}
-	return e.partials.get(name)
+	return e.cfg.partials.get(name)
 }
 
 // forloopName approximates Shopify's `forloop.name` ("{var}-{collection}").
@@ -327,19 +358,20 @@ func (e *evaluator) evalNamedArgs(args []NamedArg) (map[string]any, error) {
 }
 
 // renderPartialIsolated runs the partial with its own evaluator (no shared
-// scope, fresh cycle/counter state). The partial cache and depth counter
-// are inherited so nested partials still memoize and respect the recursion
-// cap.
+// scope, fresh registers). The renderConfig is shared by pointer so the
+// partial sees the same loader and strict-mode flags; the depth counter
+// is inherited and incremented so the recursion cap still applies.
 func (e *evaluator) renderPartialIsolated(partial *Template, data map[string]any) (string, error) {
 	if e.partialDepth >= maxPartialDepth {
 		return "", fmt.Errorf("partial depth exceeded %d (possible cycle)", maxPartialDepth)
 	}
-	sub := newEvaluator(data)
-	sub.partials = e.partials
-	sub.partialDepth = e.partialDepth + 1
-	sub.strictVariables = e.strictVariables
-	sub.strictFilters = e.strictFilters
-	sub.templateName = partial.name
+	sub := &evaluator{
+		cfg:          e.cfg,
+		regs:         newRegisters(),
+		ctx:          newContext(data),
+		templateName: partial.name,
+		partialDepth: e.partialDepth + 1,
+	}
 	return sub.evaluate(partial.ast)
 }
 
@@ -548,7 +580,7 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 	switch x := expr.(type) {
 	case *IdentExpr:
 		val := e.ctx.get(x.Name)
-		if val == nil && e.strictVariables {
+		if val == nil && e.cfg.strictVariables {
 			if _, ok := e.ctx.lookup(x.Name); !ok {
 				return nil, wrapAtNode(x, fmt.Errorf("undefined variable %q", x.Name), e.templateName)
 			}
@@ -564,7 +596,7 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 			return nil, err
 		}
 		val, ok := getPropertyOK(obj, x.Property)
-		if !ok && e.strictVariables {
+		if !ok && e.cfg.strictVariables {
 			return nil, wrapAtNode(x, fmt.Errorf("undefined property %q", x.Property), e.templateName)
 		}
 		return val, nil
@@ -579,7 +611,7 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 			return nil, err
 		}
 		val, ok := getIndexOK(obj, idx)
-		if !ok && e.strictVariables {
+		if !ok && e.cfg.strictVariables {
 			return nil, wrapAtNode(x, fmt.Errorf("undefined index %v", idx), e.templateName)
 		}
 		return val, nil
@@ -628,7 +660,7 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 			}
 			return out, nil
 		}
-		if e.strictFilters {
+		if e.cfg.strictFilters {
 			return nil, wrapAtNode(x, fmt.Errorf("unknown filter %q", x.Name), e.templateName)
 		}
 		// Unknown filter — return input unchanged (lax Liquid semantics).
@@ -1027,7 +1059,7 @@ func (e *evaluator) evalCycleTag(tag *CycleTag) (string, error) {
 	}
 
 	// Get current position in cycle
-	pos := e.cycleCounters[key]
+	pos := e.regs.cycle[key]
 
 	// Evaluate the current value
 	idx := pos % len(tag.Values)
@@ -1037,23 +1069,23 @@ func (e *evaluator) evalCycleTag(tag *CycleTag) (string, error) {
 	}
 
 	// Increment counter for next call
-	e.cycleCounters[key] = pos + 1
+	e.regs.cycle[key] = pos + 1
 
 	return toString(val), nil
 }
 
 func (e *evaluator) evalIncrementTag(tag *IncrementTag) (string, error) {
 	// Increment outputs the current value, then increments
-	val := e.counterVars[tag.Variable]
+	val := e.regs.counter[tag.Variable]
 	result := toString(val)
-	e.counterVars[tag.Variable] = val + 1
+	e.regs.counter[tag.Variable] = val + 1
 	return result, nil
 }
 
 func (e *evaluator) evalDecrementTag(tag *DecrementTag) (string, error) {
 	// Decrement decrements first, then outputs the value
-	e.counterVars[tag.Variable]--
-	val := e.counterVars[tag.Variable]
+	e.regs.counter[tag.Variable]--
+	val := e.regs.counter[tag.Variable]
 	return toString(val), nil
 }
 
@@ -1179,11 +1211,11 @@ func (e *evaluator) evalIfchangedTag(tag *IfchangedTag) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if e.ifchangedSet && e.ifchangedLast == out {
+	if e.regs.ifchangedSet && e.regs.ifchangedLast == out {
 		return "", nil
 	}
-	e.ifchangedLast = out
-	e.ifchangedSet = true
+	e.regs.ifchangedLast = out
+	e.regs.ifchangedSet = true
 	return out, nil
 }
 
