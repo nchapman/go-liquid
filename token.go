@@ -82,26 +82,48 @@ type token struct {
 	column  int
 }
 
-// expressionKeywords maps the small set of words that are reserved in every
-// position because they have no other valid expression interpretation. Tag
-// names (`if`, `for`, `endif`, etc.) and sub-keywords (`in`, `with`, `as`,
-// `limit`, `offset`, `reversed`, `when`) are NOT here — they remain plain
-// identifiers and are recognized by the parser only at structural positions.
-var expressionKeywords = map[string]TokenType{
-	"and":      tokenAnd,
-	"or":       tokenOr,
-	"contains": tokenContains,
-	"true":     tokenTrue,
-	"false":    tokenFalse,
-	"nil":      tokenNil,
-	"null":     tokenNil,
-	"empty":    tokenEmpty,
-	"blank":    tokenBlank,
-}
-
+// lookupIdent classifies an identifier literal as either an
+// expression-context keyword (truly reserved everywhere) or a plain
+// identifier. Tag names (`if`, `for`, `endif`, etc.) and sub-keywords
+// (`in`, `with`, `as`, `limit`, `offset`, `reversed`, `when`) are NOT
+// reserved here — they remain plain identifiers and are recognized by
+// the parser only at structural positions.
+//
+// A length-bucketed switch is faster than a map lookup for this small,
+// fixed set, and identifiers are scanned in the lexer's hot path.
 func lookupIdent(ident string) TokenType {
-	if tok, ok := expressionKeywords[ident]; ok {
-		return tok
+	switch len(ident) {
+	case 2:
+		if ident == "or" {
+			return tokenOr
+		}
+	case 3:
+		switch ident {
+		case "and":
+			return tokenAnd
+		case "nil":
+			return tokenNil
+		}
+	case 4:
+		switch ident {
+		case "true":
+			return tokenTrue
+		case "null":
+			return tokenNil
+		}
+	case 5:
+		switch ident {
+		case "false":
+			return tokenFalse
+		case "empty":
+			return tokenEmpty
+		case "blank":
+			return tokenBlank
+		}
+	case 8:
+		if ident == "contains" {
+			return tokenContains
+		}
 	}
 	return tokenIdent
 }

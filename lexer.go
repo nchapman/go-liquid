@@ -1,5 +1,7 @@
 package liquid
 
+import "strings"
+
 // lexerMode represents the current lexing mode.
 type lexerMode int
 
@@ -61,6 +63,56 @@ func (l *lexer) peekCharN(n int) byte {
 	return l.input[pos]
 }
 
+// seekTo bulk-advances the lexer state to targetPos. Equivalent to calling
+// readChar (targetPos - l.pos) times, but updates line/column in batch by
+// scanning the traversed bytes for newlines.
+//
+// Preconditions: l.ch != 0 (i.e. l.pos < len(l.input)) and
+// targetPos < len(l.input). Violating either panics with an out-of-bounds
+// index — callers crossing the EOF boundary must use seekToEnd instead so
+// the ch=0 / column++ semantics match readChar.
+func (l *lexer) seekTo(targetPos int) {
+	if targetPos <= l.pos {
+		return
+	}
+	// readChar() iterated (targetPos - l.pos) times sets ch to each of
+	// input[l.pos+1 .. targetPos] in turn. Those are the bytes that update
+	// line/column.
+	traversed := l.input[l.pos+1 : targetPos+1]
+	if nlIdx := strings.LastIndexByte(traversed, '\n'); nlIdx >= 0 {
+		l.line += strings.Count(traversed, "\n")
+		l.column = len(traversed) - 1 - nlIdx
+	} else {
+		l.column += len(traversed)
+	}
+	l.pos = targetPos
+	l.readPos = targetPos + 1
+	l.ch = l.input[targetPos]
+}
+
+// seekToEnd bulk-advances the lexer to EOF (l.ch = 0, l.pos = len(input)).
+// Equivalent to calling readChar until ch=0.
+func (l *lexer) seekToEnd() {
+	if l.pos >= len(l.input) {
+		l.ch = 0
+		l.pos = len(l.input)
+		l.readPos = len(l.input) + 1
+		return
+	}
+	// Bytes that became ch via readChar: input[l.pos+1 .. len-1] (each
+	// updates line/col), then a final readChar sets ch=0 with column++.
+	rest := l.input[l.pos+1:]
+	if nlIdx := strings.LastIndexByte(rest, '\n'); nlIdx >= 0 {
+		l.line += strings.Count(rest, "\n")
+		l.column = (len(rest) - 1 - nlIdx) + 1
+	} else {
+		l.column += len(rest) + 1
+	}
+	l.pos = len(l.input)
+	l.readPos = len(l.input) + 1
+	l.ch = 0
+}
+
 func (l *lexer) nextToken() token {
 	switch l.mode {
 	case modeText:
@@ -75,6 +127,10 @@ func (l *lexer) nextToken() token {
 }
 
 // nextTextToken scans text until we hit {{ or {% or EOF.
+//
+// Hot path: most of a Liquid template is plain text. We avoid the per-byte
+// readChar loop by jumping to the next '{' with strings.IndexByte and only
+// updating line/column once over the skipped run.
 func (l *lexer) nextTextToken() token {
 	if l.ch == 0 {
 		return token{typ: tokenEOF, line: l.line, column: l.column}
@@ -85,9 +141,21 @@ func (l *lexer) nextTextToken() token {
 	startPos := l.pos
 
 	for l.ch != 0 {
-		// Check for inline comment {# ... #} - skip entirely
-		if l.ch == '{' && l.peekChar() == '#' {
-			// If we have accumulated text, return it first
+		if l.ch != '{' {
+			rel := strings.IndexByte(l.input[l.readPos:], '{')
+			if rel < 0 {
+				// No more '{' anywhere — consume rest as text.
+				l.seekToEnd()
+				break
+			}
+			l.seekTo(l.readPos + rel)
+			// l.ch is now '{'.
+		}
+
+		p := l.peekChar()
+
+		// Inline comment {# ... #} — skip entirely, then continue scanning text.
+		if p == '#' {
 			if l.pos > startPos {
 				return token{
 					typ:     tokenText,
@@ -96,35 +164,32 @@ func (l *lexer) nextTextToken() token {
 					column:  startCol,
 				}
 			}
-			// Skip the entire comment
-			l.readChar() // consume {
-			l.readChar() // consume #
+			l.readChar() // {
+			l.readChar() // #
 			for l.ch != 0 {
 				if l.ch == '#' && l.peekChar() == '}' {
-					l.readChar() // consume #
-					l.readChar() // consume }
+					l.readChar() // #
+					l.readChar() // }
 					break
 				}
 				l.readChar()
 			}
-			// Also consume trailing newline if the comment was on its own line
-			// This prevents blank lines from inline comments
+			// Trim a trailing newline so an inline comment on its own line
+			// doesn't leave a blank line behind.
 			if l.ch == '\n' {
 				l.readChar()
 			} else if l.ch == '\r' && l.peekChar() == '\n' {
 				l.readChar()
 				l.readChar()
 			}
-			// Continue scanning text after the comment
 			startLine = l.line
 			startCol = l.column
 			startPos = l.pos
 			continue
 		}
 
-		// Check for output start {{ or {{-
-		if l.ch == '{' && l.peekChar() == '{' {
-			// If we have accumulated text, return it first
+		// Output start {{ or {{-
+		if p == '{' {
 			if l.pos > startPos {
 				return token{
 					typ:     tokenText,
@@ -133,13 +198,12 @@ func (l *lexer) nextTextToken() token {
 					column:  startCol,
 				}
 			}
-			// Check for trim marker
 			tokLine := l.line
 			tokCol := l.column
-			l.readChar() // consume first {
-			l.readChar() // consume second {
+			l.readChar() // {
+			l.readChar() // {
 			if l.ch == '-' {
-				l.readChar() // consume -
+				l.readChar()
 				l.mode = modeOutput
 				return token{typ: tokenOutputTrim, line: tokLine, column: tokCol}
 			}
@@ -147,9 +211,8 @@ func (l *lexer) nextTextToken() token {
 			return token{typ: tokenOutputOpen, line: tokLine, column: tokCol}
 		}
 
-		// Check for tag start {% or {%-
-		if l.ch == '{' && l.peekChar() == '%' {
-			// If we have accumulated text, return it first
+		// Tag start {% or {%-
+		if p == '%' {
 			if l.pos > startPos {
 				return token{
 					typ:     tokenText,
@@ -158,13 +221,12 @@ func (l *lexer) nextTextToken() token {
 					column:  startCol,
 				}
 			}
-			// Check for trim marker
 			tokLine := l.line
 			tokCol := l.column
-			l.readChar() // consume {
-			l.readChar() // consume %
+			l.readChar() // {
+			l.readChar() // %
 			if l.ch == '-' {
-				l.readChar() // consume -
+				l.readChar()
 				l.mode = modeTag
 				return token{typ: tokenTagTrim, line: tokLine, column: tokCol}
 			}
@@ -172,10 +234,10 @@ func (l *lexer) nextTextToken() token {
 			return token{typ: tokenTagOpen, line: tokLine, column: tokCol}
 		}
 
+		// Lone '{' — consume and resume scanning.
 		l.readChar()
 	}
 
-	// Return any remaining text
 	if l.pos > startPos {
 		return token{
 			typ:     tokenText,
@@ -184,7 +246,6 @@ func (l *lexer) nextTextToken() token {
 			column:  startCol,
 		}
 	}
-
 	return token{typ: tokenEOF, line: l.line, column: l.column}
 }
 
@@ -332,13 +393,33 @@ func (l *lexer) scanExpression(line, col int) token {
 	}
 }
 
+// scanString scans a quoted string literal. Strings without escape sequences
+// (the common case) are returned as direct substring slices of the input;
+// only strings containing backslash escapes pay for an unescape pass.
 func (l *lexer) scanString() token {
 	line := l.line
 	col := l.column
 	quote := l.ch
 	l.readChar() // consume opening quote
 
-	var literal []byte
+	startPos := l.pos
+	src := l.input
+
+	// Fast scan: walk to the closing quote or first backslash.
+	for l.ch != 0 && l.ch != quote && l.ch != '\\' {
+		l.readChar()
+	}
+
+	if l.ch == quote {
+		// No escapes — slice the substring directly.
+		literal := src[startPos:l.pos]
+		l.readChar() // closing quote
+		return token{typ: tokenString, literal: literal, line: line, column: col}
+	}
+
+	// Slow path: copy what we have, then process escapes byte by byte.
+	literal := make([]byte, 0, len(src)-startPos)
+	literal = append(literal, src[startPos:l.pos]...)
 	for l.ch != 0 && l.ch != quote {
 		if l.ch == '\\' && l.peekChar() != 0 {
 			l.readChar()
@@ -363,69 +444,101 @@ func (l *lexer) scanString() token {
 		}
 		l.readChar()
 	}
-	l.readChar() // consume closing quote
+	l.readChar() // closing quote
 	return token{typ: tokenString, literal: string(literal), line: line, column: col}
 }
 
+// scanNumber scans an integer or float literal. Operates directly on input
+// indices to avoid the per-byte readChar loop.
 func (l *lexer) scanNumber() token {
 	line := l.line
 	col := l.column
 	startPos := l.pos
-	isFloat := false
+	src := l.input
+	n := len(src)
+	p := l.pos
 
-	for isDigit(l.ch) {
-		l.readChar()
+	for p < n && isDigit(src[p]) {
+		p++
 	}
 
-	if l.ch == '.' && isDigit(l.peekChar()) {
+	isFloat := false
+	if p+1 < n && src[p] == '.' && isDigit(src[p+1]) {
 		isFloat = true
-		l.readChar() // consume .
-		for isDigit(l.ch) {
-			l.readChar()
+		p++ // consume .
+		for p < n && isDigit(src[p]) {
+			p++
 		}
 	}
 
-	literal := l.input[startPos:l.pos]
+	literal := src[startPos:p]
+	// No newlines can appear in a number — column update is a simple delta.
+	l.column += p - l.pos
+	l.pos = p
+	l.readPos = p + 1
+	if p >= n {
+		l.ch = 0
+	} else {
+		l.ch = src[p]
+	}
+
 	if isFloat {
 		return token{typ: tokenFloat, literal: literal, line: line, column: col}
 	}
 	return token{typ: tokenInt, literal: literal, line: line, column: col}
 }
 
+// scanIdentifier scans an identifier. Operates directly on input indices to
+// avoid the per-byte readChar loop. The first char is already known to be a
+// letter or underscore.
+//
+// Ruby Liquid's IDENTIFIER regex allows hyphens between identifier chars
+// (`my-var`), and a single trailing `?` (`available?`). Hyphens are tricky
+// because `-` is also the minus operator and the trim marker, so we only
+// consume a hyphen when an identifier char follows it.
 func (l *lexer) scanIdentifier() token {
 	line := l.line
 	col := l.column
 	startPos := l.pos
+	src := l.input
+	n := len(src)
+	p := l.pos + 1 // first char is verified by caller
 
-	// Ruby Liquid's IDENTIFIER regex allows hyphens after the first
-	// character: /[a-zA-Z_][\w-]*\??/. Templates like {{ my-var }} or
-	// {{ obj.product-name }} are valid Liquid. The hyphen is also the
-	// minus operator and the trim marker, so peek the next byte and only
-	// consume it as part of the identifier when an identifier character
-	// follows — `obj-prop` is one ident, `obj - prop` is three tokens.
-	for {
+scan:
+	for p < n {
+		c := src[p]
 		switch {
-		case isLetter(l.ch) || isDigit(l.ch) || l.ch == '_':
-			l.readChar()
-		case l.ch == '-' && l.pos > startPos:
-			next := l.peekChar()
-			if isLetter(next) || isDigit(next) || next == '_' {
-				l.readChar()
+		case isLetter(c) || isDigit(c) || c == '_':
+			p++
+		// p > startPos here (p starts at l.pos+1), so the original
+		// "no leading hyphen" rule holds automatically. The p+1 < n
+		// guard just keeps the src[p+1] peek in bounds at end-of-input.
+		case c == '-' && p+1 < n:
+			nx := src[p+1]
+			if isLetter(nx) || isDigit(nx) || nx == '_' {
+				p += 2
 			} else {
-				goto done
+				break scan
 			}
-		case l.ch == '?':
-			// Trailing `?` is allowed once and ends the identifier.
-			l.readChar()
-			goto done
+		case c == '?':
+			p++
+			break scan
 		default:
-			goto done
+			break scan
 		}
 	}
-done:
-	literal := l.input[startPos:l.pos]
-	typ := lookupIdent(literal)
-	return token{typ: typ, literal: literal, line: line, column: col}
+
+	literal := src[startPos:p]
+	// No newlines can appear in an identifier.
+	l.column += p - l.pos
+	l.pos = p
+	l.readPos = p + 1
+	if p >= n {
+		l.ch = 0
+	} else {
+		l.ch = src[p]
+	}
+	return token{typ: lookupIdent(literal), literal: literal, line: line, column: col}
 }
 
 func (l *lexer) skipWhitespace() {
