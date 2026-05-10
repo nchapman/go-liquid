@@ -12,6 +12,18 @@ import (
 // errors.Is(err, ErrDisabledTag).
 var ErrDisabledTag = errors.New("liquid: tag is disabled in this scope")
 
+// ErrUndefinedVariable is returned (wrapped in a RenderError) when a
+// template references a variable, property, or index that is not
+// defined while StrictVariables is enabled. Mirrors Ruby Liquid's
+// Liquid::UndefinedVariable. Use errors.Is to detect.
+var ErrUndefinedVariable = errors.New("liquid: undefined variable")
+
+// ErrUndefinedFilter is returned (wrapped in a RenderError) when a
+// template applies a filter name that is not registered while
+// StrictFilters is enabled. Mirrors Ruby Liquid's Liquid::UndefinedFilter.
+// Use errors.Is to detect.
+var ErrUndefinedFilter = errors.New("liquid: undefined filter")
+
 // ParseError is returned when a template fails to parse. It carries the
 // source position so callers can pinpoint the offending tag, and an
 // optional TemplateName that hosts may set on partials so error messages

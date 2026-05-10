@@ -29,6 +29,11 @@ type renderConfig struct {
 	strictVariables bool
 	strictFilters   bool
 	limits          *ResourceLimits
+	// userRegisters is the caller-supplied state bag attached via
+	// WithRegisters. Shared by reference with partials so mutations made
+	// inside a custom tag are visible to the caller after Render returns.
+	// Mirrors Ruby Liquid's Context#registers.
+	userRegisters map[string]any
 }
 
 // registers holds per-render scratch state — the Shopify-Liquid concept
@@ -735,7 +740,7 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		val := e.ctx.get(x.Name)
 		if val == nil && e.cfg.strictVariables {
 			if _, ok := e.ctx.lookup(x.Name); !ok {
-				return nil, wrapAtNode(x, fmt.Errorf("undefined variable %q", x.Name), e.templateName)
+				return nil, wrapAtNode(x, fmt.Errorf("%w %q", ErrUndefinedVariable, x.Name), e.templateName)
 			}
 		}
 		// A top-level Drop reached without a property descent (e.g.
@@ -755,7 +760,7 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		}
 		val, ok := getPropertyOK(obj, x.Property, e)
 		if !ok && e.cfg.strictVariables {
-			return nil, wrapAtNode(x, fmt.Errorf("undefined property %q", x.Property), e.templateName)
+			return nil, wrapAtNode(x, fmt.Errorf("%w: property %q", ErrUndefinedVariable, x.Property), e.templateName)
 		}
 		return val, nil
 
@@ -770,7 +775,7 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		}
 		val, ok := getIndexOK(obj, idx, e)
 		if !ok && e.cfg.strictVariables {
-			return nil, wrapAtNode(x, fmt.Errorf("undefined index %v", idx), e.templateName)
+			return nil, wrapAtNode(x, fmt.Errorf("%w: index %v", ErrUndefinedVariable, idx), e.templateName)
 		}
 		return val, nil
 
@@ -818,7 +823,7 @@ func (e *evaluator) evalFilterExpr(x *FilterExpr) (any, error) {
 		return out, nil
 	}
 	if e.cfg.strictFilters {
-		return nil, wrapAtNode(x, fmt.Errorf("unknown filter %q", x.Name), e.templateName)
+		return nil, wrapAtNode(x, fmt.Errorf("%w %q", ErrUndefinedFilter, x.Name), e.templateName)
 	}
 	return input, nil
 }

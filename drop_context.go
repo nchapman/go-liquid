@@ -34,6 +34,12 @@ type RenderContext interface {
 	// WithName, or propagated from a partial). Useful for diagnostic
 	// messages emitted from a Drop.
 	TemplateName() string
+
+	// Registers returns the user-supplied state map attached via
+	// WithRegisters, or nil if none was attached. Mutations are
+	// visible to the caller after Render returns. Mirrors Ruby
+	// Liquid's Context#registers.
+	Registers() map[string]any
 }
 
 // ContextAwareDrop is implemented by Drop types that need access to the
@@ -81,6 +87,8 @@ func (e *evaluator) StrictFilters() bool { return e.cfg.strictFilters }
 func (e *evaluator) ResourceLimits() *ResourceLimits { return e.cfg.limits }
 
 func (e *evaluator) TemplateName() string { return e.templateName }
+
+func (e *evaluator) Registers() map[string]any { return e.cfg.userRegisters }
 
 // setDropContext installs ctx on obj if it's a ContextAwareDrop. No-op
 // otherwise. Called at every Drop lookup site so nested drops returned

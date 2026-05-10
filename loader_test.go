@@ -1008,8 +1008,8 @@ func TestDropStrictVariablesUsesLookupOK(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error in strict mode for absent Drop key")
 	}
-	if !strings.Contains(err.Error(), "undefined property") {
-		t.Fatalf("got %v", err)
+	if !errors.Is(err, ErrUndefinedVariable) {
+		t.Fatalf("expected ErrUndefinedVariable, got %v", err)
 	}
 }
 
@@ -1273,8 +1273,8 @@ func TestErrorReturningMethodTreatedAsUndefined(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected strict-mode error for failing method")
 	}
-	if !strings.Contains(err.Error(), "undefined property") {
-		t.Fatalf("got %v", err)
+	if !errors.Is(err, ErrUndefinedVariable) {
+		t.Fatalf("expected ErrUndefinedVariable, got %v", err)
 	}
 }
 

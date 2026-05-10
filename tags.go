@@ -79,6 +79,11 @@ type TagContext interface {
 	// disable mechanism should check this on entry and return
 	// ErrDisabledTag if true. Mirrors Tag::Disableable.
 	TagDisabled(name string) bool
+	// Registers returns the user-supplied state map attached via
+	// WithRegisters, or nil if none was attached. Use it to thread
+	// per-render state (request IDs, caches, ad-hoc counters) through
+	// custom tags. Mirrors Ruby Liquid's Context#registers.
+	Registers() map[string]any
 }
 
 // RegisterTag installs an inline custom tag on the default environment.
@@ -185,6 +190,8 @@ func (c *tagCtx) WithDisabledTags(names []string, fn func() error) error {
 }
 
 func (c *tagCtx) TagDisabled(name string) bool { return c.ev.tagDisabled(name) }
+
+func (c *tagCtx) Registers() map[string]any { return c.ev.cfg.userRegisters }
 
 func (c *tagCtx) RenderPartial(w io.Writer, name string) error {
 	if c.ev.partialDepth >= maxPartialDepth {

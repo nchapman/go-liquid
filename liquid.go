@@ -116,6 +116,7 @@ type renderOpts struct {
 	strictVariables bool
 	strictFilters   bool
 	limits          *ResourceLimits
+	registers       map[string]any
 }
 
 // StrictVariables makes Render fail when a referenced variable is
@@ -128,6 +129,21 @@ func StrictVariables() RenderOption {
 // By default Liquid passes the input through unchanged.
 func StrictFilters() RenderOption {
 	return func(o *renderOpts) { o.strictFilters = true }
+}
+
+// WithRegisters attaches a user-supplied state map to a Render call.
+// Custom tags reach the same map via TagContext.Registers; a Drop reaches
+// it via RenderContext.Registers. The map is passed by reference and is
+// shared across partials within the render — mutations stick.
+//
+// Mirrors Ruby Liquid's `template.render(data, registers: {...})`.
+// Useful for threading per-render state (request IDs, user tokens, ad-hoc
+// caches) into custom tags without leaking it into the template scope.
+//
+// Pass a non-nil map even if you intend to populate it from custom tags;
+// otherwise Registers returns nil and tags must nil-check.
+func WithRegisters(registers map[string]any) RenderOption {
+	return func(o *renderOpts) { o.registers = registers }
 }
 
 // Render executes the template against data and returns the rendered string.
@@ -143,6 +159,7 @@ func (t *Template) Render(data any, opts ...RenderOption) (string, error) {
 	eval.cfg.strictVariables = o.strictVariables
 	eval.cfg.strictFilters = o.strictFilters
 	eval.cfg.limits = o.limits
+	eval.cfg.userRegisters = o.registers
 	eval.templateName = t.name
 	var sb strings.Builder
 	var w io.Writer = &sb
@@ -171,6 +188,7 @@ func (t *Template) RenderTo(w io.Writer, data any, opts ...RenderOption) error {
 	eval.cfg.strictVariables = o.strictVariables
 	eval.cfg.strictFilters = o.strictFilters
 	eval.cfg.limits = o.limits
+	eval.cfg.userRegisters = o.registers
 	eval.templateName = t.name
 	if o.limits != nil {
 		if err := o.limits.reset(); err != nil {
