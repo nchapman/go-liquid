@@ -557,6 +557,29 @@ func (p *parser) parseInlineCommentTag() (Node, error) {
 	}
 	p.trimNextText = trimRight
 	p.nextToken() // refresh
+	// If the comment spans multiple lines, every non-blank line AFTER
+	// the opening `#`-line must itself begin with `#`. Mirrors Ruby's
+	// InlineComment#parse check. The opening `#` is already consumed,
+	// so the first split chunk is the tail of that line and is
+	// exempt.
+	if strings.ContainsRune(content, '\n') {
+		for i, ln := range strings.Split(content, "\n") {
+			if i == 0 {
+				continue
+			}
+			s := strings.TrimSpace(ln)
+			if s == "" {
+				continue
+			}
+			if !strings.HasPrefix(s, "#") {
+				return nil, &ParseError{
+					Message: "Each line of comments must be prefixed by the '#' character",
+					Line:    line,
+					Column:  column,
+				}
+			}
+		}
+	}
 	return &CommentTag{Content: content, Line: line, Column: column}, nil
 }
 
@@ -1067,14 +1090,14 @@ func (p *parser) parseAssignTag() (Node, error) {
 
 	if p.curToken.typ != tokenIdent {
 		return nil, newParseError(p.curToken.line, p.curToken.column,
-			"expected variable name, got %q", p.curToken.literal)
+			"Syntax Error in 'assign' tag - Valid syntax: assign [var] = [source]")
 	}
 	varName := p.curToken.literal
 	p.nextToken()
 
 	if p.curToken.typ != tokenAssign {
 		return nil, newParseError(p.curToken.line, p.curToken.column,
-			"expected '=', got %q", p.curToken.literal)
+			"Syntax Error in 'assign' tag - Valid syntax: assign [var] = [source]")
 	}
 	p.nextToken()
 
@@ -1674,17 +1697,28 @@ func (p *parser) parseAtom() (Expression, error) {
 		return &LiteralExpr{Value: blankValue{}, Line: line, Column: column}, nil
 
 	case tokenLParen:
-		p.nextToken()
-		expr, err := p.parseExpression()
+		// Parens in Liquid only delimit ranges: `(start..end)`. Ruby
+		// Liquid rejects parenthesized grouping in any other context.
+		p.nextToken() // consume (
+		start, err := p.parsePrimary()
+		if err != nil {
+			return nil, err
+		}
+		if p.curToken.typ != tokenRange {
+			return nil, newParseError(p.curToken.line, p.curToken.column,
+				"expected '..' in range, got %q", p.curToken.literal)
+		}
+		p.nextToken() // consume ..
+		end, err := p.parsePrimary()
 		if err != nil {
 			return nil, err
 		}
 		if p.curToken.typ != tokenRParen {
 			return nil, newParseError(p.curToken.line, p.curToken.column,
-				"expected ')', got %q", p.curToken.literal)
+				"expected ')' to close range, got %q", p.curToken.literal)
 		}
 		p.nextToken()
-		return expr, nil
+		return &RangeExpr{Start: start, End: end, Line: line, Column: column}, nil
 
 	case tokenMinus:
 		// Unary minus for negative numbers

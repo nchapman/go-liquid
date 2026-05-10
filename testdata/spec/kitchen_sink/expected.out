@@ -15,7 +15,7 @@ score=[0] missing=[n/a]
 
 --- Empty ---
 (no items)
-total counter=
+total counter=4
 
 === RENDER FOR with filtered args, isolation check ===
 - card #1/4 BANANA $0.5 (last=false) probe-here=MUTATED-INSIDE-RENDER

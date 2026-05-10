@@ -491,7 +491,7 @@ func (e *evaluator) evalIfTag(w io.Writer, tag *IfTag) error {
 	}
 
 	if toBool(cond) {
-		return e.evalNodes(w, tag.ThenBranch)
+		return e.evalNodes(blankWriter(w, tag.ThenBranch), tag.ThenBranch)
 	}
 
 	for _, elsif := range tag.ElsifBranches {
@@ -500,12 +500,12 @@ func (e *evaluator) evalIfTag(w io.Writer, tag *IfTag) error {
 			return err
 		}
 		if toBool(cond) {
-			return e.evalNodes(w, elsif.Body)
+			return e.evalNodes(blankWriter(w, elsif.Body), elsif.Body)
 		}
 	}
 
 	if tag.ElseBranch != nil {
-		return e.evalNodes(w, tag.ElseBranch)
+		return e.evalNodes(blankWriter(w, tag.ElseBranch), tag.ElseBranch)
 	}
 
 	return nil
@@ -518,11 +518,11 @@ func (e *evaluator) evalUnlessTag(w io.Writer, tag *UnlessTag) error {
 	}
 
 	if !toBool(cond) {
-		return e.evalNodes(w, tag.Body)
+		return e.evalNodes(blankWriter(w, tag.Body), tag.Body)
 	}
 
 	if tag.ElseBranch != nil {
-		return e.evalNodes(w, tag.ElseBranch)
+		return e.evalNodes(blankWriter(w, tag.ElseBranch), tag.ElseBranch)
 	}
 
 	return nil
@@ -541,13 +541,13 @@ func (e *evaluator) evalCaseTag(w io.Writer, tag *CaseTag) error {
 				return err
 			}
 			if equal(value, v) {
-				return e.evalNodes(w, when.Body)
+				return e.evalNodes(blankWriter(w, when.Body), when.Body)
 			}
 		}
 	}
 
 	if tag.Else != nil {
-		return e.evalNodes(w, tag.Else)
+		return e.evalNodes(blankWriter(w, tag.Else), tag.Else)
 	}
 
 	return nil
@@ -560,7 +560,7 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 	}
 	if len(items) == 0 {
 		if tag.ElseBody != nil {
-			return e.evalNodes(w, tag.ElseBody)
+			return e.evalNodes(blankWriter(w, tag.ElseBody), tag.ElseBody)
 		}
 		return nil
 	}
@@ -597,7 +597,7 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 
 	if len(items) == 0 {
 		if tag.ElseBody != nil {
-			return e.evalNodes(w, tag.ElseBody)
+			return e.evalNodes(blankWriter(w, tag.ElseBody), tag.ElseBody)
 		}
 		return nil
 	}
@@ -621,6 +621,7 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 	// shares scope and would otherwise leave a stale pointer in our slot.
 	fl := &forloopState{length: length, name: loopName, parent: parent}
 
+	bw := blankWriter(w, tag.Body)
 	for i, item := range items {
 		fl.index0 = i
 		e.ctx.set(tag.Variable, item)
@@ -631,7 +632,7 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 		// iteration — matching the pre-Writer behavior, where evalNodes
 		// returned (partial-output, errBreak) and the caller appended
 		// the partial output before breaking.
-		err := e.evalNodes(w, tag.Body)
+		err := e.evalNodes(bw, tag.Body)
 		consumed = i + 1
 		if errors.Is(err, errBreak) {
 			break
@@ -1330,17 +1331,24 @@ func (e *evaluator) evalCycleTag(w io.Writer, tag *CycleTag) error {
 }
 
 func (e *evaluator) evalIncrementTag(w io.Writer, tag *IncrementTag) error {
-	// Increment outputs the current value, then increments
+	// Increment outputs the current counter, then advances it. The new
+	// counter value is published into the scope so that a subsequent
+	// {{ var }} sees the counter (Ruby Liquid semantics).
 	val := e.regs.counter[tag.Variable]
-	e.regs.counter[tag.Variable] = val + 1
+	next := val + 1
+	e.regs.counter[tag.Variable] = next
+	e.ctx.setGlobal(tag.Variable, next)
 	_, err := io.WriteString(w, toString(val))
 	return err
 }
 
 func (e *evaluator) evalDecrementTag(w io.Writer, tag *DecrementTag) error {
-	// Decrement decrements first, then outputs the value
+	// Decrement decrements first, then outputs the new value. The new
+	// counter value is also published into the scope so a subsequent
+	// {{ var }} sees the counter (Ruby Liquid semantics).
 	e.regs.counter[tag.Variable]--
 	val := e.regs.counter[tag.Variable]
+	e.ctx.setGlobal(tag.Variable, val)
 	_, err := io.WriteString(w, toString(val))
 	return err
 }
