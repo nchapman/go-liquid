@@ -655,6 +655,30 @@ func TestShopifyBenchSmoke(t *testing.T) {
 	}
 }
 
+// BenchmarkShopifyTokenize mirrors the Ruby benchmark's `tokenize:` phase —
+// drive the lexer to EOF for every template+layout source without invoking
+// the parser. Useful for isolating regressions in the scanner.
+func BenchmarkShopifyTokenize(b *testing.B) {
+	loadShopifyData(b)
+	tmpls := loadShopifyTemplates(b)
+	sources := make([]string, 0, len(tmpls)*2)
+	for _, t := range tmpls {
+		sources = append(sources, t.source, t.layout)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, src := range sources {
+			l := newLexer(src)
+			for {
+				tok := l.nextToken()
+				if tok.typ == tokenEOF {
+					break
+				}
+			}
+		}
+	}
+}
+
 func BenchmarkShopifyParse(b *testing.B) {
 	loadShopifyData(b)
 	tmpls := loadShopifyTemplates(b)

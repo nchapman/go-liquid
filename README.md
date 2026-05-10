@@ -170,12 +170,19 @@ Render benchmark uses a 100-element loop with conditionals, filters, and propert
 `{% paginate %}` and `{% form %}` are registered as block tags via the
 public `RegisterBlock` API (see _Custom tags_ above).
 
-Wall time on the same Apple M4 Max:
+Wall time per full pass over the 30-template set, on the same Apple M4 Max
+(`go test -bench=Shopify -benchtime=5s` and the Ruby gem's bench at
+`PHASE=… bundle exec ruby performance/benchmark.rb`):
 
-| Phase  | go-liquid (per template) | Shopify/liquid (Ruby 3.4 + YJIT) | Ratio |
-|--------|--------------------------|----------------------------------|-------|
-| Parse  | ~12 µs                   | ~100 µs                          | ~8×   |
-| Render | ~20 µs                   | ~44 µs                           | ~2×   |
+| Phase            | go-liquid | Shopify/liquid (Ruby 3.4 + YJIT) | Ratio |
+|------------------|-----------|----------------------------------|-------|
+| Tokenize         | 0.40 ms   | 0.26 ms                          | 0.7×  |
+| Parse            | 0.69 ms   | 5.99 ms                          | 8.7×  |
+| Render           | 0.60 ms   | 1.31 ms                          | 2.2×  |
+| Parse + Render   | 1.36 ms   | 7.89 ms                          | 5.8×  |
+
+Ruby wins on raw tokenization — its `StringScanner` is very tight C — but
+go-liquid pulls ahead the moment any AST or render work is involved.
 
 Reproduce the Ruby side:
 
