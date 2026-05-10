@@ -277,17 +277,22 @@ func (e *evaluator) evalRenderTag(w io.Writer, tag *RenderTag) error {
 		items := toSlice(coll)
 		alias := partialAlias(tag.ForAlias, tag.Template)
 		length := len(items)
+		// Reuse one itemData map and one forloopState across iterations:
+		// renderPartialIsolated copies into a fresh context, so the partial
+		// can't observe later mutations.
+		itemData := make(map[string]any, len(data)+2)
+		for k, v := range data {
+			itemData[k] = v
+		}
+		// render is isolated → parentloop is nil. Shopify's render.rb sets
+		// forloop.name to the partial's template name (not the iteration
+		// alias), so {% render "card" for items as item %} exposes
+		// forloop.name == "card".
+		fl := &forloopState{length: length, name: tag.Template}
+		itemData["forloop"] = fl
 		for i, item := range items {
-			itemData := make(map[string]any, len(data)+2)
-			for k, v := range data {
-				itemData[k] = v
-			}
+			fl.index0 = i
 			itemData[alias] = item
-			// render is isolated → parentloop is nil. Shopify's render.rb sets
-			// forloop.name to the partial's template name (not the iteration
-			// alias), so {% render "card" for items as item %} exposes
-			// forloop.name == "card".
-			itemData["forloop"] = newForloop(i, length, tag.Template, nil)
 			if err := e.renderPartialIsolated(w, partial, itemData); err != nil {
 				return err
 			}
@@ -337,11 +342,15 @@ func (e *evaluator) evalIncludeTag(w io.Writer, tag *IncludeTag) error {
 		alias := partialAlias(tag.ForAlias, tag.Template)
 		length := len(items)
 		// include shares parent scope, so the enclosing forloop (if any)
-		// becomes parentloop.
-		parent, _ := e.ctx.get("forloop").(map[string]any)
+		// becomes parentloop. The forloop slot is re-set each iteration
+		// because a nested {% include … for … %} inside the partial would
+		// also write to this same shared scope and clobber our pointer.
+		parent, _ := e.ctx.get("forloop").(*forloopState)
+		fl := &forloopState{length: length, name: alias, parent: parent}
 		for i, item := range items {
+			fl.index0 = i
 			e.ctx.set(alias, item)
-			e.ctx.set("forloop", newForloop(i, length, alias, parent))
+			e.ctx.set("forloop", fl)
 			if err := e.evalNodes(w, partial.ast.nodes); err != nil {
 				return err
 			}
@@ -610,7 +619,7 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 	// the new forloop.parentloop reflects the outer iteration. Shopify's
 	// `forloop.name` is "{var}-{collection}"; we render the collection
 	// expression source where possible, falling back to the variable name.
-	parent, _ := e.ctx.get("forloop").(map[string]any)
+	parent, _ := e.ctx.get("forloop").(*forloopState)
 	loopName := forloopName(tag)
 
 	e.ctx = e.ctx.push()
@@ -618,10 +627,15 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 
 	length := len(items)
 	consumed := 0
+	// Allocate one forloopState per for-tag and mutate index0 each pass; the
+	// re-set in the loop guards against an inner {% include … for … %} that
+	// shares scope and would otherwise leave a stale pointer in our slot.
+	fl := &forloopState{length: length, name: loopName, parent: parent}
 
 	for i, item := range items {
+		fl.index0 = i
 		e.ctx.set(tag.Variable, item)
-		e.ctx.set("forloop", newForloop(i, length, loopName, parent))
+		e.ctx.set("forloop", fl)
 
 		// Body output streams directly to w as it goes. {% break %} and
 		// {% continue %} do not unwind output already written this
@@ -702,12 +716,15 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		}
 
 		var args []any
-		for _, arg := range x.Args {
-			val, err := e.evalExpr(arg)
-			if err != nil {
-				return nil, err
+		if len(x.Args) > 0 {
+			args = make([]any, len(x.Args))
+			for i, arg := range x.Args {
+				val, err := e.evalExpr(arg)
+				if err != nil {
+					return nil, err
+				}
+				args[i] = val
 			}
-			args = append(args, val)
 		}
 		var kwargs map[string]any
 		if len(x.Kwargs) > 0 {
@@ -1286,6 +1303,7 @@ func (e *evaluator) evalTablerowTag(w io.Writer, tag *TablerowTag) error {
 	// emit the wrapped cell than to insert the closing tag from the
 	// outside if break/continue fired mid-stream.
 	var cell strings.Builder
+	tl := &tablerowloopState{length: length, cols: cols}
 	for i, item := range items {
 		col := i%cols + 1
 		row := i/cols + 1
@@ -1293,21 +1311,13 @@ func (e *evaluator) evalTablerowTag(w io.Writer, tag *TablerowTag) error {
 		colLast := col == cols || i == length-1
 		isLast := i == length-1
 
+		tl.index0 = i
+		tl.col = col
+		tl.row = row
+		tl.colFirst = colFirst
+		tl.colLast = colLast
 		e.ctx.set(tag.Variable, item)
-		e.ctx.set("tablerowloop", map[string]any{
-			"length":    length,
-			"index":     i + 1,
-			"index0":    i,
-			"rindex":    length - i,
-			"rindex0":   length - i - 1,
-			"col":       col,
-			"col0":      col - 1,
-			"row":       row,
-			"first":     i == 0,
-			"last":      isLast,
-			"col_first": colFirst,
-			"col_last":  colLast,
-		})
+		e.ctx.set("tablerowloop", tl)
 
 		cell.Reset()
 		bodyErr := e.evalNodes(&cell, tag.Body)

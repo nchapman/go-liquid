@@ -1292,13 +1292,11 @@ func toString(v any) string {
 		}
 		return "false"
 	case int:
-		return fmt.Sprintf("%d", val)
+		return strconv.Itoa(val)
 	case int64:
-		return fmt.Sprintf("%d", val)
+		return strconv.FormatInt(val, 10)
 	case float64:
-		// Format without trailing zeros
-		s := fmt.Sprintf("%g", val)
-		return s
+		return strconv.FormatFloat(val, 'g', -1, 64)
 	default:
 		return fmt.Sprintf("%v", val)
 	}

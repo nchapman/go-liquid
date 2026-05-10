@@ -1,0 +1,8 @@
+# Compiled test/benchmark binaries from `go test -c` or interrupted runs
+*.test
+
+# Profiling output from `go test -cpuprofile`/`-memprofile`
+*.prof
+
+# Editor/OS junk
+.DS_Store

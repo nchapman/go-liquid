@@ -154,9 +154,9 @@ A `Loader` resolves partial names to source. The standard library ships
 Microbenchmarks on an Apple M4 Max (`go test -bench=. -benchmem`):
 
 ```
-BenchmarkParse-16           1229 ns/op     1560 B/op    33 allocs/op
-BenchmarkRenderParsed-16   28276 ns/op    75808 B/op   627 allocs/op
-BenchmarkRenderTo-16       26752 ns/op    70400 B/op   616 allocs/op
+BenchmarkParse-16           1200 ns/op     1624 B/op    33 allocs/op
+BenchmarkRenderParsed-16   11810 ns/op     7880 B/op   128 allocs/op
+BenchmarkRenderTo-16       10872 ns/op     2480 B/op   117 allocs/op
 ```
 
 Render benchmark uses a 100-element loop with conditionals, filters, and property access.
@@ -178,8 +178,8 @@ Wall time per full pass over the 30-template set, on the same Apple M4 Max
 |------------------|-----------|----------------------------------|-------|
 | Tokenize         | 0.18 ms   | 0.26 ms                          | 1.4×  |
 | Parse            | 0.50 ms   | 5.96 ms                          | 11.9× |
-| Render           | 0.62 ms   | 1.32 ms                          | 2.1×  |
-| Parse + Render   | 1.23 ms   | 7.96 ms                          | 6.5×  |
+| Render           | 0.54 ms   | 1.32 ms                          | 2.4×  |
+| Parse + Render   | 1.15 ms   | 7.96 ms                          | 6.9×  |
 
 go-liquid is faster end-to-end and now beats Ruby's `StringScanner`-based
 tokenizer too.
