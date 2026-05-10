@@ -48,6 +48,21 @@ func TestShopifyCompat(t *testing.T) {
 		{"strftime %X", `{{ d | date: "%X" }}`, "12:00:00", map[string]any{"d": "2024-03-15T12:00:00Z"}},
 		{"strftime %F shorthand", `{{ d | date: "%F" }}`, "2024-03-15", map[string]any{"d": "2024-03-15T12:00:00Z"}},
 
+		// Ruby strftime flag modifiers: `-` strips zero-padding, `_` pads
+		// with spaces, `0` forces zero-padding. The `%-d` form is what most
+		// Jekyll/Shopify templates use to render "Jan 2, 2006".
+		{"strftime %-d no pad", `{{ d | date: "%-d" }}`, "5", map[string]any{"d": "2024-03-05T00:00:00Z"}},
+		{"strftime %-m no pad", `{{ d | date: "%-m" }}`, "3", map[string]any{"d": "2024-03-05T00:00:00Z"}},
+		{"strftime %_d space pad", `{{ d | date: "%_d" }}`, " 5", map[string]any{"d": "2024-03-05T00:00:00Z"}},
+		{"strftime %0e zero pad overrides default space", `{{ d | date: "%0e" }}`, "05", map[string]any{"d": "2024-03-05T00:00:00Z"}},
+		{"strftime %-Y no pad year", `{{ d | date: "%-Y" }}`, "2024", map[string]any{"d": "2024-03-05T00:00:00Z"}},
+		{"strftime composite Jan 2, 2006", `{{ d | date: "%b %-d, %Y" }}`, "Mar 5, 2024", map[string]any{"d": "2024-03-05T00:00:00Z"}},
+
+		// Ruby's Utils.to_date accepts integer/numeric-string Unix
+		// timestamps and the literal strings "now"/"today".
+		{"date int unix timestamp", `{{ d | date: "%Y-%m-%d" }}`, "2024-03-15", map[string]any{"d": int64(1710504000)}},
+		{"date numeric string timestamp", `{{ d | date: "%Y-%m-%d" }}`, "2024-03-15", map[string]any{"d": "1710504000"}},
+
 		// truncatewords clamps to 1 word minimum (Ruby clamps `words <= 0`).
 		{"truncatewords clamps zero", `{{ s | truncatewords: 0 }}`, "one...", map[string]any{"s": "one two three"}},
 		{"truncatewords clamps negative", `{{ s | truncatewords: -5 }}`, "one...", map[string]any{"s": "one two three"}},

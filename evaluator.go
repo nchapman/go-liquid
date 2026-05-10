@@ -22,6 +22,7 @@ const maxRangeSize = 1_000_000
 // {% render %} and {% include %} so a partial sees the same loader and
 // strictness as the root template.
 type renderConfig struct {
+	env             *Environment
 	partials        *partialCache
 	strictVariables bool
 	strictFilters   bool
@@ -70,7 +71,7 @@ type evaluator struct {
 
 func newEvaluator(data map[string]any) *evaluator {
 	return &evaluator{
-		cfg:  &renderConfig{},
+		cfg:  &renderConfig{env: Default()},
 		regs: newRegisters(),
 		ctx:  newContext(data),
 	}
@@ -702,7 +703,7 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		// Single dispatch through the unified Filter interface. Positional
 		// filters that don't care about kwargs ignore them via FilterFunc.Apply,
 		// matching Shopify's "extra hash arg is a no-op" semantics.
-		if fn, ok := filters[x.Name]; ok {
+		if fn, ok := e.cfg.env.lookupFilter(x.Name); ok {
 			out, err := fn.Apply(input, args, kwargs)
 			if err != nil {
 				return nil, wrapAtNode(x, err, e.templateName)

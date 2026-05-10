@@ -67,10 +67,21 @@ func filterErrorf(format string, args ...any) any {
 func pos(fn FilterFunc) Filter      { return fn }
 func kw(fn KwargFilterFunc) Filter  { return fn }
 
-// filters is the global filter registry, keyed by template name. One
-// table covers both positional and kwarg filters via the Filter
-// interface; the evaluator dispatches through a single lookup.
-var filters = map[string]Filter{
+// registerStandardFilters writes the built-in filter set into e. Called by
+// NewEnvironment so every fresh environment ships with the Shopify/Ruby
+// Liquid standard library.
+func registerStandardFilters(e *Environment) {
+	for name, fn := range standardFilters {
+		e.filters[name] = fn
+	}
+}
+
+// standardFilters is the canonical built-in filter set. Treated as
+// effectively immutable after package init: registerStandardFilters copies
+// each entry into a fresh per-Environment map, and nothing else writes to
+// it. Do not mutate after init — a write here would silently affect every
+// future environment.
+var standardFilters = map[string]Filter{
 	// String filters
 	"upcase":        pos(filterUpcase),
 	"downcase":      pos(filterDowncase),
@@ -982,12 +993,36 @@ func filterDate(input any, args ...any) any {
 
 	format := toString(args[0])
 
-	// Parse the input as a time
+	// Parse the input as a time. Mirrors Ruby's Utils.to_date: accepts
+	// time values, the literal strings "now"/"today" (current time),
+	// integer or numeric-string Unix timestamps, and a handful of common
+	// date/time string formats.
 	var t time.Time
 	switch v := input.(type) {
 	case time.Time:
 		t = v
+	case int:
+		t = time.Unix(int64(v), 0)
+	case int32:
+		t = time.Unix(int64(v), 0)
+	case int64:
+		t = time.Unix(v, 0)
+	case uint, uint32, uint64:
+		t = time.Unix(int64(toInt(toNumber(v))), 0)
+	case float32:
+		t = time.Unix(int64(v), 0)
+	case float64:
+		t = time.Unix(int64(v), 0)
 	case string:
+		if strings.EqualFold(v, "now") || strings.EqualFold(v, "today") {
+			t = time.Now()
+			break
+		}
+		// Numeric string → Unix timestamp (matches Ruby's UNIX_TIMESTAMP_REGEX).
+		if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+			t = time.Unix(n, 0)
+			break
+		}
 		// Try common formats
 		formats := []string{
 			time.RFC3339,
@@ -1027,38 +1062,84 @@ func strftimeToGo(t time.Time, format string) string {
 			sb.WriteByte(format[i])
 			continue
 		}
-		i++
-		switch format[i] {
+		// Parse Ruby strftime flag + width modifiers between `%` and the
+		// directive: `-` strips zero-padding, `_` pads with spaces, `0`
+		// forces zero-padding, optional digits set an explicit width
+		// (e.g. `%-d`, `%_3d`, `%04Y`). Multiple flags are tolerated;
+		// the last one wins, matching Ruby.
+		flag := byte(0) // 0|'-'|'_'|'0'
+		width := -1
+		j := i + 1
+	flagloop:
+		for j < len(format) {
+			switch format[j] {
+			case '-', '_', '0':
+				flag = format[j]
+				j++
+			default:
+				break flagloop
+			}
+		}
+		for j < len(format) && format[j] >= '0' && format[j] <= '9' {
+			if width < 0 {
+				width = 0
+			}
+			width = width*10 + int(format[j]-'0')
+			j++
+		}
+		if j >= len(format) {
+			// Trailing `%` with flags but no directive — emit verbatim.
+			sb.WriteString(format[i:])
+			i = len(format) - 1
+			continue
+		}
+		directive := format[j]
+		i = j
+		switch directive {
 		case 'Y':
-			fmt.Fprintf(&sb, "%04d", t.Year())
+			writeStrftimeNum(&sb, t.Year(), 4, flag, width)
 		case 'y':
-			fmt.Fprintf(&sb, "%02d", t.Year()%100)
+			writeStrftimeNum(&sb, t.Year()%100, 2, flag, width)
 		case 'm':
-			fmt.Fprintf(&sb, "%02d", t.Month())
+			writeStrftimeNum(&sb, int(t.Month()), 2, flag, width)
 		case 'd':
-			fmt.Fprintf(&sb, "%02d", t.Day())
+			writeStrftimeNum(&sb, t.Day(), 2, flag, width)
 		case 'e':
-			fmt.Fprintf(&sb, "%2d", t.Day())
+			// `%e` is space-padded by default; treat it as `%_d` so
+			// flag overrides still work (`%-e` → no pad, `%0e` → zero pad).
+			f := flag
+			if f == 0 {
+				f = '_'
+			}
+			writeStrftimeNum(&sb, t.Day(), 2, f, width)
 		case 'H':
-			fmt.Fprintf(&sb, "%02d", t.Hour())
+			writeStrftimeNum(&sb, t.Hour(), 2, flag, width)
 		case 'k':
-			fmt.Fprintf(&sb, "%2d", t.Hour())
+			f := flag
+			if f == 0 {
+				f = '_'
+			}
+			writeStrftimeNum(&sb, t.Hour(), 2, f, width)
 		case 'I':
 			h := t.Hour() % 12
 			if h == 0 {
 				h = 12
 			}
-			fmt.Fprintf(&sb, "%02d", h)
+			writeStrftimeNum(&sb, h, 2, flag, width)
 		case 'l':
 			h := t.Hour() % 12
 			if h == 0 {
 				h = 12
 			}
-			fmt.Fprintf(&sb, "%2d", h)
+			f := flag
+			if f == 0 {
+				f = '_'
+			}
+			writeStrftimeNum(&sb, h, 2, f, width)
 		case 'M':
-			fmt.Fprintf(&sb, "%02d", t.Minute())
+			writeStrftimeNum(&sb, t.Minute(), 2, flag, width)
 		case 'S':
-			fmt.Fprintf(&sb, "%02d", t.Second())
+			writeStrftimeNum(&sb, t.Second(), 2, flag, width)
 		case 'p':
 			if t.Hour() < 12 {
 				sb.WriteString("AM")
@@ -1080,20 +1161,22 @@ func strftimeToGo(t time.Time, format string) string {
 		case 'b', 'h':
 			sb.WriteString(t.Month().String()[:3])
 		case 'j':
-			fmt.Fprintf(&sb, "%03d", t.YearDay())
+			writeStrftimeNum(&sb, t.YearDay(), 3, flag, width)
 		case 'w':
-			fmt.Fprintf(&sb, "%d", int(t.Weekday())) // Sunday=0
+			writeStrftimeNum(&sb, int(t.Weekday()), 1, flag, width) // Sunday=0
 		case 'u':
 			d := int(t.Weekday())
 			if d == 0 {
 				d = 7
 			}
-			fmt.Fprintf(&sb, "%d", d) // ISO Monday=1..Sunday=7
+			writeStrftimeNum(&sb, d, 1, flag, width) // ISO Monday=1..Sunday=7
 		case 'U':
-			fmt.Fprintf(&sb, "%02d", weekOfYearSundayStart(t))
+			writeStrftimeNum(&sb, weekOfYearSundayStart(t), 2, flag, width)
 		case 'W':
-			fmt.Fprintf(&sb, "%02d", weekOfYearMondayStart(t))
+			writeStrftimeNum(&sb, weekOfYearMondayStart(t), 2, flag, width)
 		case 's':
+			// Unix epoch can exceed 32 bits past 2038, so format the
+			// int64 directly rather than narrowing through writeStrftimeNum.
 			fmt.Fprintf(&sb, "%d", t.Unix())
 		case 'Z':
 			sb.WriteString(t.Format("MST"))
@@ -1123,13 +1206,38 @@ func strftimeToGo(t time.Time, format string) string {
 		case '%':
 			sb.WriteByte('%')
 		default:
-			// Unknown directive: emit the source verbatim so authors can
-			// spot the typo, matching Ruby's strftime ignore-and-pass behavior.
+			// Unknown directive: emit `%`, any modifiers, and the
+			// directive verbatim so authors can spot the typo.
 			sb.WriteByte('%')
-			sb.WriteByte(format[i])
+			if flag != 0 {
+				sb.WriteByte(flag)
+			}
+			if width >= 0 {
+				fmt.Fprintf(&sb, "%d", width)
+			}
+			sb.WriteByte(directive)
 		}
 	}
 	return sb.String()
+}
+
+// writeStrftimeNum formats n into sb using strftime-style flag and width
+// modifiers. defaultWidth is the directive's natural padding width when no
+// explicit width was given. flag is one of 0 (default zero-pad),
+// '-' (no padding), '_' (space-pad), '0' (zero-pad).
+func writeStrftimeNum(sb *strings.Builder, n, defaultWidth int, flag byte, width int) {
+	w := width
+	if w < 0 {
+		w = defaultWidth
+	}
+	switch flag {
+	case '-':
+		fmt.Fprintf(sb, "%d", n)
+	case '_':
+		fmt.Fprintf(sb, "%*d", w, n)
+	default: // 0 or unset → zero-pad
+		fmt.Fprintf(sb, "%0*d", w, n)
+	}
 }
 
 // weekOfYearSundayStart implements strftime %U: the week number of the

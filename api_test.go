@@ -22,7 +22,7 @@ func TestRegisterFilter(t *testing.T) {
 		}
 		return strings.ToUpper(s) + suffix
 	})
-	t.Cleanup(func() { delete(filters, name) })
+	t.Cleanup(func() { delete(Default().filters, name) })
 
 	got, err := Render(`{{ "hi" | `+name+`: "?!" }}`, nil)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestRegisterFilter(t *testing.T) {
 	RegisterFilter("upcase", func(input any, args ...any) any { return "OVERRIDDEN" })
 	t.Cleanup(func() {
 		// Restore the built-in so other tests aren't poisoned.
-		filters["upcase"] = FilterFunc(filterUpcase)
+		Default().filters["upcase"] = FilterFunc(filterUpcase)
 	})
 	got, err = Render(`{{ "x" | upcase }}`, nil)
 	if err != nil {
@@ -59,7 +59,7 @@ func TestRegisterFilterE(t *testing.T) {
 		}
 		return n * 2, nil
 	})
-	t.Cleanup(func() { delete(filters, name) })
+	t.Cleanup(func() { delete(Default().filters, name) })
 
 	got, err := Render(`{{ x | `+name+` }}`, map[string]any{"x": 5})
 	if err != nil {
@@ -139,7 +139,7 @@ func TestRenderErrorUnwrap(t *testing.T) {
 	RegisterFilter(name, func(input any, args ...any) any {
 		return filterErrorf("%w", sentinel)
 	})
-	t.Cleanup(func() { delete(filters, name) })
+	t.Cleanup(func() { delete(Default().filters, name) })
 
 	_, err := Render(`{{ "x" | `+name+` }}`, nil)
 	if err == nil {

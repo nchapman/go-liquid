@@ -11,10 +11,18 @@ type parser struct {
 	l            *lexer
 	curToken     token
 	trimNextText bool // trim leading whitespace from next text node (set by -%} tags)
+	env          *Environment
 }
 
 func newParser(input string) *parser {
-	p := &parser{l: newLexer(input)}
+	return newParserWithEnv(input, Default())
+}
+
+func newParserWithEnv(input string, env *Environment) *parser {
+	if env == nil {
+		env = Default()
+	}
+	p := &parser{l: newLexer(input), env: env}
 	p.nextToken()
 	return p
 }
@@ -241,7 +249,7 @@ func (p *parser) parseTag() (Node, error) {
 // parser; for block tags, the body is then parsed up to {% endNAME %}.
 func (p *parser) parseCustomTag() (Node, bool, error) {
 	name := p.curToken.literal
-	parse, isBlock, ok := lookupCustomTag(name)
+	parse, isBlock, ok := p.env.lookupCustomTag(name)
 	if !ok {
 		return nil, false, nil
 	}
@@ -566,7 +574,7 @@ func (p *parser) parseLiquidTag() (Node, error) {
 		sb.WriteString(" %}")
 	}
 
-	sub := newParser(sb.String())
+	sub := newParserWithEnv(sb.String(), p.env)
 	ast, err := sub.parse()
 	if err != nil {
 		return nil, &ParseError{

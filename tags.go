@@ -48,41 +48,32 @@ type TagContext interface {
 	// body) it is a no-op that returns nil, so renderers can call it
 	// unconditionally.
 	RenderBody(w io.Writer) error
+	// RenderPartial loads the partial named name through the active
+	// loader (reusing the partial cache) and renders it into w against
+	// the current scope, with the same shared-scope semantics as
+	// {% include %} — variables assigned in the partial leak back into
+	// the caller. Returns an error if no loader is configured, the
+	// partial cannot be loaded or parsed, or the partial-recursion cap
+	// is exceeded.
+	//
+	// Mirrors Ruby Liquid's PartialCache.load + the shared-scope render
+	// path used by the built-in Include tag.
+	RenderPartial(w io.Writer, name string) error
 }
 
-var (
-	inlineTagRegistry = map[string]TagParser{}
-	blockTagRegistry  = map[string]TagParser{}
-)
-
-// RegisterTag installs an inline custom tag. The framework treats the tag
-// as having no body: `{% NAME ... %}`. Registering a name that collides
-// with a built-in tag (`if`, `for`, etc.) panics. Not safe to call
-// concurrently with rendering — register at startup.
+// RegisterTag installs an inline custom tag on the default environment.
+// The framework treats the tag as having no body: `{% NAME ... %}`.
+// Registering a name that collides with a built-in tag (`if`, `for`, etc.)
+// panics. Use Environment.RegisterTag for an isolated registry.
 func RegisterTag(name string, parse TagParser) {
-	guardCustomTagName(name)
-	inlineTagRegistry[name] = parse
+	Default().RegisterTag(name, parse)
 }
 
-// RegisterBlock installs a block custom tag. The framework consumes the
-// body between `{% NAME ... %}` and `{% endNAME %}`. Registering a name
-// that collides with a built-in tag panics. Not safe to call concurrently
-// with rendering.
+// RegisterBlock installs a block custom tag on the default environment.
+// The framework consumes the body between `{% NAME ... %}` and
+// `{% endNAME %}`. Panics on collision with a built-in tag.
 func RegisterBlock(name string, parse TagParser) {
-	guardCustomTagName(name)
-	blockTagRegistry[name] = parse
-}
-
-// lookupCustomTag returns the registered parser for name, reporting whether
-// it was found and whether it expects a body (block).
-func lookupCustomTag(name string) (parse TagParser, isBlock bool, ok bool) {
-	if p, found := blockTagRegistry[name]; found {
-		return p, true, true
-	}
-	if p, found := inlineTagRegistry[name]; found {
-		return p, false, true
-	}
-	return nil, false, false
+	Default().RegisterBlock(name, parse)
 }
 
 // guardCustomTagName rejects names that would shadow a built-in tag. We
@@ -161,4 +152,17 @@ func (c *tagCtx) RenderBody(w io.Writer) error {
 		return nil
 	}
 	return c.ev.evalNodes(w, c.body)
+}
+
+func (c *tagCtx) RenderPartial(w io.Writer, name string) error {
+	if c.ev.partialDepth >= maxPartialDepth {
+		return fmt.Errorf("partial depth exceeded %d (possible cycle in %q)", maxPartialDepth, name)
+	}
+	partial, err := c.ev.loadPartial(name)
+	if err != nil {
+		return err
+	}
+	c.ev.partialDepth++
+	defer func() { c.ev.partialDepth-- }()
+	return c.ev.evalNodes(w, partial.ast.nodes)
 }

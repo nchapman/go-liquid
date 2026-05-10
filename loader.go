@@ -85,12 +85,16 @@ func safePartialPath(name, ext string) (string, error) {
 // includes another partial reuses the same cache.
 type partialCache struct {
 	loader Loader
+	env    *Environment
 	mu     sync.Mutex
 	parsed map[string]*Template
 }
 
-func newPartialCache(loader Loader) *partialCache {
-	return &partialCache{loader: loader, parsed: make(map[string]*Template)}
+func newPartialCache(loader Loader, env *Environment) *partialCache {
+	if env == nil {
+		env = Default()
+	}
+	return &partialCache{loader: loader, env: env, parsed: make(map[string]*Template)}
 }
 
 func (c *partialCache) get(name string) (*Template, error) {
@@ -108,7 +112,7 @@ func (c *partialCache) get(name string) (*Template, error) {
 	if err != nil {
 		return nil, err
 	}
-	t, err := Parse(src)
+	t, err := c.env.Parse(src)
 	if err != nil {
 		// Surface the partial name on the underlying ParseError so
 		// errors.As can extract it; falls back to a wrap for non-ParseError

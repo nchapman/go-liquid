@@ -17,7 +17,7 @@ func (f renderFunc) Render(w io.Writer, ctx TagContext) error { return f(w, ctx)
 // and renderer cooperate end-to-end, including markup pass-through.
 func TestRegisterTag_Inline(t *testing.T) {
 	const name = "shout_inline_test"
-	t.Cleanup(func() { delete(inlineTagRegistry, name) })
+	t.Cleanup(func() { delete(Default().inlineTags, name) })
 
 	RegisterTag(name, func(markup string) (TagRenderer, error) {
 		msg := strings.TrimSpace(markup)
@@ -40,7 +40,7 @@ func TestRegisterTag_Inline(t *testing.T) {
 // rendering, scope reads via Get, and PushScope isolation.
 func TestRegisterBlock_BodyAndScope(t *testing.T) {
 	const name = "wrap_block_test"
-	t.Cleanup(func() { delete(blockTagRegistry, name) })
+	t.Cleanup(func() { delete(Default().blockTags, name) })
 
 	RegisterBlock(name, func(markup string) (TagRenderer, error) {
 		tag := strings.TrimSpace(markup)
@@ -75,7 +75,7 @@ func TestRegisterBlock_BodyAndScope(t *testing.T) {
 // PushScope writes into the caller's scope (escapes the block).
 func TestRegisterBlock_AssignVisibleAfterEnd(t *testing.T) {
 	const name = "leaky_block_test"
-	t.Cleanup(func() { delete(blockTagRegistry, name) })
+	t.Cleanup(func() { delete(Default().blockTags, name) })
 
 	RegisterBlock(name, func(_ string) (TagRenderer, error) {
 		return renderFunc(func(w io.Writer, ctx TagContext) error {
@@ -97,7 +97,7 @@ func TestRegisterBlock_AssignVisibleAfterEnd(t *testing.T) {
 // body surfaces a parse error rather than silently closing the block.
 func TestRegisterBlock_MismatchedEnd(t *testing.T) {
 	const name = "needs_close_test"
-	t.Cleanup(func() { delete(blockTagRegistry, name) })
+	t.Cleanup(func() { delete(Default().blockTags, name) })
 
 	RegisterBlock(name, func(_ string) (TagRenderer, error) {
 		return renderFunc(func(w io.Writer, ctx TagContext) error { return ctx.RenderBody(w) }), nil
@@ -112,7 +112,7 @@ func TestRegisterBlock_MismatchedEnd(t *testing.T) {
 // user's TagParser is reported as a parse error, not a render error.
 func TestRegisterTag_ParserErrorPropagates(t *testing.T) {
 	const name = "rejects_test"
-	t.Cleanup(func() { delete(inlineTagRegistry, name) })
+	t.Cleanup(func() { delete(Default().inlineTags, name) })
 
 	RegisterTag(name, func(markup string) (TagRenderer, error) {
 		return nil, fmt.Errorf("nope: %q", strings.TrimSpace(markup))
@@ -142,7 +142,7 @@ func TestRegisterTag_BuiltinNamePanics(t *testing.T) {
 // when a custom tag closes with -%}.
 func TestRegisterTag_TrimRespected(t *testing.T) {
 	const name = "trim_test"
-	t.Cleanup(func() { delete(inlineTagRegistry, name) })
+	t.Cleanup(func() { delete(Default().inlineTags, name) })
 
 	RegisterTag(name, func(string) (TagRenderer, error) {
 		return renderFunc(func(w io.Writer, _ TagContext) error {
@@ -165,7 +165,7 @@ func TestRegisterTag_TrimRespected(t *testing.T) {
 // expected end tag.
 func TestRegisterBlock_Unterminated(t *testing.T) {
 	const name = "needs_eof_test"
-	t.Cleanup(func() { delete(blockTagRegistry, name) })
+	t.Cleanup(func() { delete(Default().blockTags, name) })
 
 	RegisterBlock(name, func(_ string) (TagRenderer, error) {
 		return renderFunc(func(w io.Writer, ctx TagContext) error { return ctx.RenderBody(w) }), nil
@@ -184,7 +184,7 @@ func TestRegisterBlock_Unterminated(t *testing.T) {
 // the opening and closing tags of a custom block.
 func TestRegisterBlock_TrimAroundTags(t *testing.T) {
 	const name = "trim_block_test"
-	t.Cleanup(func() { delete(blockTagRegistry, name) })
+	t.Cleanup(func() { delete(Default().blockTags, name) })
 
 	RegisterBlock(name, func(_ string) (TagRenderer, error) {
 		return renderFunc(func(w io.Writer, ctx TagContext) error { return ctx.RenderBody(w) }), nil

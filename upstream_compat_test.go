@@ -463,12 +463,13 @@ func TestUpstream_UnlessElse(t *testing.T) {
 // renders templates that depend on built-in filters.
 func TestUpstream_OutputFilterPipelines(t *testing.T) {
 	// Register filters once for these tests; restore afterwards.
-	old := filters
-	filters = make(map[string]Filter, len(old))
+	d := Default()
+	old := d.filters
+	d.filters = make(map[string]Filter, len(old))
 	for k, v := range old {
-		filters[k] = v
+		d.filters[k] = v
 	}
-	defer func() { filters = old }()
+	defer func() { d.filters = old }()
 
 	RegisterFilter("make_funny", func(in any, args ...any) any { return "LOL" })
 	RegisterFilter("cite_funny", func(in any, args ...any) any { return "LOL: " + toString(in) })

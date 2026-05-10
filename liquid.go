@@ -50,8 +50,16 @@ import (
 // WithLoader (the loader pointer is updated atomically).
 type Template struct {
 	ast      *templateAST
+	env      *Environment
 	partials atomic.Pointer[partialCache]
 	name     string // optional; populated when loaded via a Loader
+}
+
+func (t *Template) environment() *Environment {
+	if t.env != nil {
+		return t.env
+	}
+	return Default()
 }
 
 // WithLoader attaches a Loader so the template can resolve {% render %} and
@@ -59,7 +67,7 @@ type Template struct {
 // calls swap the loader atomically and reset the partial cache; in-flight
 // renders observe the loader they started with.
 func (t *Template) WithLoader(l Loader) *Template {
-	t.partials.Store(newPartialCache(l))
+	t.partials.Store(newPartialCache(l, t.environment()))
 	return t
 }
 
@@ -72,14 +80,11 @@ func (t *Template) WithName(name string) *Template {
 	return t
 }
 
-// Parse parses a Liquid template source string.
+// Parse parses a Liquid template source string against the default
+// environment. To parse against an isolated environment, use
+// Environment.Parse.
 func Parse(source string) (*Template, error) {
-	p := newParser(source)
-	ast, err := p.parse()
-	if err != nil {
-		return nil, err
-	}
-	return &Template{ast: ast}, nil
+	return Default().Parse(source)
 }
 
 // MustParse is like Parse but panics on error. Use for templates known at
@@ -121,6 +126,7 @@ func (t *Template) Render(data any, opts ...RenderOption) (string, error) {
 		opt(&o)
 	}
 	eval := newEvaluator(toStringMap(data))
+	eval.cfg.env = t.environment()
 	eval.cfg.partials = t.partials.Load()
 	eval.cfg.strictVariables = o.strictVariables
 	eval.cfg.strictFilters = o.strictFilters
@@ -140,6 +146,7 @@ func (t *Template) RenderTo(w io.Writer, data any, opts ...RenderOption) error {
 		opt(&o)
 	}
 	eval := newEvaluator(toStringMap(data))
+	eval.cfg.env = t.environment()
 	eval.cfg.partials = t.partials.Load()
 	eval.cfg.strictVariables = o.strictVariables
 	eval.cfg.strictFilters = o.strictFilters
@@ -166,29 +173,25 @@ func MustRender(source string, data any, opts ...RenderOption) string {
 	return out
 }
 
-// RegisterFilter installs a custom positional-argument filter under the
-// given name. It overrides any built-in filter with the same name. Not
-// safe to call concurrently with rendering.
+// RegisterFilter installs a custom positional-argument filter on the
+// default environment. Equivalent to Default().RegisterFilter. Use
+// Environment.RegisterFilter on a NewEnvironment for an isolated registry.
 func RegisterFilter(name string, fn FilterFunc) {
-	filters[name] = fn
+	Default().RegisterFilter(name, fn)
 }
 
 // RegisterKwargFilter installs a custom filter that accepts named
-// arguments via kwargs. Use this when your filter takes options like
-// `{{ x | my_filter: group_by: "name", limit: 10 }}`. Not safe to call
-// concurrently with rendering. Overrides any built-in filter with the
-// same name.
+// arguments via kwargs on the default environment. Use it for filters
+// like `{{ x | my_filter: group_by: "name", limit: 10 }}`.
 func RegisterKwargFilter(name string, fn KwargFilterFunc) {
-	filters[name] = fn
+	Default().RegisterKwargFilter(name, fn)
 }
 
-// RegisterFilterE installs a custom filter under the given name using the
-// new (any, error)-returning signature. Prefer this over RegisterFilter
-// /RegisterKwargFilter for new filters: errors are first-class and the
-// filterError sentinel dance is unnecessary. Not safe to call concurrently
-// with rendering.
+// RegisterFilterE installs a custom filter on the default environment
+// using the (any, error)-returning signature. Preferred over
+// RegisterFilter / RegisterKwargFilter for new filters.
 func RegisterFilterE(name string, fn FilterFuncE) {
-	filters[name] = fn
+	Default().RegisterFilterE(name, fn)
 }
 
 // toStringMap normalizes user-provided data into the map[string]any shape the

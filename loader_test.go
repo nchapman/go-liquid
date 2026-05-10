@@ -1025,7 +1025,7 @@ func TestRegisterKwargFilter(t *testing.T) {
 		}
 		return greeting + ", " + toStringForTest(input) + "!"
 	})
-	defer delete(filters, "greet")
+	defer delete(Default().filters, "greet")
 
 	out, err := Render(`{{ "Ada" | greet }} {{ "Bob" | greet: greeting: "Hi" }}`, nil)
 	if err != nil {
