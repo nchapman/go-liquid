@@ -368,24 +368,24 @@ func (e *evaluator) loadPartial(name string) (*Template, error) {
 	return e.cfg.partials.get(name)
 }
 
-// forloopName approximates Shopify's `forloop.name` ("{var}-{collection}").
-// We synthesize the collection portion from the AST since there is no
-// source-text reference; identifiers and ranges produce stable names, and
-// other expressions fall back to the variable name alone.
-func forloopName(tag *ForTag) string {
-	switch c := tag.Collection.(type) {
+// computeForloopName approximates Shopify's `forloop.name`
+// ("{var}-{collection}"). We synthesize the collection portion from the
+// AST since there is no source-text reference; identifiers and ranges
+// produce stable names, and other expressions fall back to the variable
+// name alone. Result is cached on ForTag.LoopName at parse time.
+func computeForloopName(variable string, collection Expression) string {
+	switch c := collection.(type) {
 	case *IdentExpr:
-		return tag.Variable + "-" + c.Name
+		return variable + "-" + c.Name
 	case *DotExpr:
-		// best effort: walk to the rightmost property
 		if obj, ok := c.Object.(*IdentExpr); ok {
-			return tag.Variable + "-" + obj.Name + "." + c.Property
+			return variable + "-" + obj.Name + "." + c.Property
 		}
-		return tag.Variable + "-" + c.Property
+		return variable + "-" + c.Property
 	case *RangeExpr:
-		return tag.Variable + "-(range)"
+		return variable + "-(range)"
 	}
-	return tag.Variable
+	return variable
 }
 
 // partialAlias returns the explicit alias if non-empty, otherwise the
@@ -569,7 +569,7 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 	// distinct collections under the same variable name) get independent
 	// cursors. Registers are per-Render, so the cursor resets between
 	// top-level renders.
-	contKey := forloopName(tag)
+	contKey := tag.LoopName
 	off := 0
 	switch {
 	case tag.OffsetContinue:
@@ -620,7 +620,7 @@ func (e *evaluator) evalForTag(w io.Writer, tag *ForTag) error {
 	// `forloop.name` is "{var}-{collection}"; we render the collection
 	// expression source where possible, falling back to the variable name.
 	parent, _ := e.ctx.get("forloop").(*forloopState)
-	loopName := forloopName(tag)
+	loopName := tag.LoopName
 
 	e.ctx = e.ctx.push()
 	defer func() { e.ctx = e.ctx.parent }()

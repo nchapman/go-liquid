@@ -14,12 +14,12 @@ func newContext(data map[string]any) *context {
 	return &context{vars: vars}
 }
 
-// push creates a new child scope.
+// push creates a new child scope. Most pushed scopes hold only a couple
+// of keys (a loop variable plus `forloop`), so we leave vars nil and let
+// the first set allocate a small map — saving an allocation on scopes
+// that end up empty (e.g. partials that never assign).
 func (c *context) push() *context {
-	return &context{
-		vars:   make(map[string]any),
-		parent: c,
-	}
+	return &context{parent: c}
 }
 
 // get retrieves a variable from the current scope or any parent scope.
@@ -32,8 +32,10 @@ func (c *context) get(name string) any {
 // lookup is like get but reports whether the name was bound. Used by
 // strict-variables mode to distinguish "undefined" from "explicitly nil".
 func (c *context) lookup(name string) (any, bool) {
-	if val, ok := c.vars[name]; ok {
-		return val, true
+	if c.vars != nil {
+		if val, ok := c.vars[name]; ok {
+			return val, true
+		}
 	}
 	if c.parent != nil {
 		return c.parent.lookup(name)
@@ -43,6 +45,11 @@ func (c *context) lookup(name string) (any, bool) {
 
 // set sets a variable in the current scope.
 func (c *context) set(name string, value any) {
+	if c.vars == nil {
+		// Most pushed scopes only need room for the loop variable and
+		// `forloop`; size to that to avoid an immediate rehash.
+		c.vars = make(map[string]any, 2)
+	}
 	c.vars[name] = value
 }
 

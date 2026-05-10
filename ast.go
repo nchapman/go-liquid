@@ -189,6 +189,10 @@ type ForTag struct {
 	Reversed       bool
 	Line           int
 	Column         int
+	// LoopName is Shopify's `forloop.name` ("{var}-{collection}"),
+	// derived from the AST and cached at parse time so the rendering
+	// hot path doesn't rebuild it per for-tag entry.
+	LoopName string
 }
 
 func (t *ForTag) node()                   {}

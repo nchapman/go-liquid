@@ -951,6 +951,7 @@ func (p *parser) parseForTag() (Node, error) {
 		Collection: collection,
 		Line:       line,
 		Column:     column,
+		LoopName:   computeForloopName(varName, collection),
 	}
 
 	// Optional parameters: limit, offset, reversed. These are recognized

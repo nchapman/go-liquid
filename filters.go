@@ -1295,8 +1295,20 @@ func toString(v any) string {
 		return strconv.Itoa(val)
 	case int64:
 		return strconv.FormatInt(val, 10)
+	case int32:
+		return strconv.FormatInt(int64(val), 10)
+	case uint:
+		return strconv.FormatUint(uint64(val), 10)
+	case uint64:
+		return strconv.FormatUint(val, 10)
 	case float64:
 		return strconv.FormatFloat(val, 'g', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(val), 'g', -1, 32)
+	case []byte:
+		return string(val)
+	case fmt.Stringer:
+		return val.String()
 	default:
 		return fmt.Sprintf("%v", val)
 	}
