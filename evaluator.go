@@ -820,12 +820,9 @@ func (e *evaluator) evalNamedExprs(kvs []NamedArg) (map[string]any, error) {
 	return out, nil
 }
 
-// evalBinaryExpr dispatches over the binary-operator set. The width is
-// inherent — one case per operator the Liquid grammar accepts — and lifting
-// each into its own helper would obscure the short-circuit/coercion rules
-// that read naturally as a single switch.
-//
-//nolint:cyclop // Operator dispatch; width matches the Liquid grammar.
+// evalBinaryExpr dispatches over the binary-operator set. Logical operators
+// short-circuit and preserve operand values; the rest evaluate both sides
+// and delegate to a per-operator helper.
 func (e *evaluator) evalBinaryExpr(expr *BinaryExpr) (any, error) {
 	// Logical operators short-circuit AND preserve operand values:
 	//
@@ -866,26 +863,31 @@ func (e *evaluator) evalBinaryExpr(expr *BinaryExpr) (any, error) {
 	case "!=":
 		return !equal(left, right), nil
 	case "<", ">", "<=", ">=":
-		// Relational operators against nil are always false in upstream
-		// Liquid (incompatible types). Equality operators above still apply.
-		if left == nil || right == nil {
-			return false, nil
-		}
-		switch expr.Operator {
-		case "<":
-			return compare(left, right) < 0, nil
-		case ">":
-			return compare(left, right) > 0, nil
-		case "<=":
-			return compare(left, right) <= 0, nil
-		default: // ">="
-			return compare(left, right) >= 0, nil
-		}
+		return evalRelational(expr.Operator, left, right), nil
 	case "contains":
 		return contains(left, right), nil
 	default:
 		// Unknown operators return false (Liquid semantics)
 		return false, nil
+	}
+}
+
+// evalRelational implements <, >, <=, >=. Comparisons against nil are
+// always false in upstream Liquid (incompatible types).
+func evalRelational(op string, left, right any) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	c := compare(left, right)
+	switch op {
+	case "<":
+		return c < 0
+	case ">":
+		return c > 0
+	case "<=":
+		return c <= 0
+	default: // ">="
+		return c >= 0
 	}
 }
 
