@@ -156,9 +156,9 @@ func MustRender(source string, data any, opts ...RenderOption) string {
 	return out
 }
 
-// RegisterFilter installs a custom filter under the given name. It
-// overrides any built-in filter with the same name. Not safe to call
-// concurrently with rendering.
+// RegisterFilter installs a custom positional-argument filter under the
+// given name. It overrides any built-in filter with the same name. Not
+// safe to call concurrently with rendering.
 func RegisterFilter(name string, fn FilterFunc) {
 	filters[name] = fn
 }
@@ -169,7 +169,16 @@ func RegisterFilter(name string, fn FilterFunc) {
 // concurrently with rendering. Overrides any built-in filter with the
 // same name.
 func RegisterKwargFilter(name string, fn KwargFilterFunc) {
-	kwargFilters[name] = fn
+	filters[name] = fn
+}
+
+// RegisterFilterE installs a custom filter under the given name using the
+// new (any, error)-returning signature. Prefer this over RegisterFilter
+// /RegisterKwargFilter for new filters: errors are first-class and the
+// filterError sentinel dance is unnecessary. Not safe to call concurrently
+// with rendering.
+func RegisterFilterE(name string, fn FilterFuncE) {
+	filters[name] = fn
 }
 
 // toStringMap normalizes user-provided data into the map[string]any shape the

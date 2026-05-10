@@ -36,7 +36,7 @@ func TestRegisterFilter(t *testing.T) {
 	RegisterFilter("upcase", func(input any, args ...any) any { return "OVERRIDDEN" })
 	t.Cleanup(func() {
 		// Restore the built-in so other tests aren't poisoned.
-		filters["upcase"] = filterUpcase
+		filters["upcase"] = FilterFunc(filterUpcase)
 	})
 	got, err = Render(`{{ "x" | upcase }}`, nil)
 	if err != nil {
@@ -44,6 +44,41 @@ func TestRegisterFilter(t *testing.T) {
 	}
 	if got != "OVERRIDDEN" {
 		t.Errorf("override: got %q, want OVERRIDDEN", got)
+	}
+}
+
+// TestRegisterFilterE exercises the new (any, error)-returning filter
+// signature: errors flow back as render errors at the filter's source
+// position without going through the filterError sentinel.
+func TestRegisterFilterE(t *testing.T) {
+	const name = "must_be_positive"
+	RegisterFilterE(name, func(input any, args []any, kwargs map[string]any) (any, error) {
+		n := toInt(toNumber(input))
+		if n <= 0 {
+			return nil, fmt.Errorf("%s: expected positive int, got %v", name, input)
+		}
+		return n * 2, nil
+	})
+	t.Cleanup(func() { delete(filters, name) })
+
+	got, err := Render(`{{ x | `+name+` }}`, map[string]any{"x": 5})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if got != "10" {
+		t.Errorf("happy path: got %q want 10", got)
+	}
+
+	_, err = Render(`{{ x | `+name+` }}`, map[string]any{"x": -1})
+	if err == nil {
+		t.Fatal("expected error from FilterE filter")
+	}
+	var rerr *RenderError
+	if !errors.As(err, &rerr) {
+		t.Fatalf("expected *RenderError, got %T", err)
+	}
+	if !strings.Contains(rerr.Error(), "expected positive") {
+		t.Errorf("error should propagate the message: %q", rerr.Error())
 	}
 }
 

@@ -642,21 +642,13 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 			}
 		}
 
-		// Filters that accept kwargs are registered in a parallel table.
-		// Plain FilterFuncs receive only positional args; any kwargs the
-		// template provides for them are silently ignored, matching
-		// Shopify's behavior (extra hash arg is a no-op).
-		if fn, ok := kwargFilters[x.Name]; ok {
-			out := fn(input, args, kwargs)
-			if fe, ok := out.(filterError); ok {
-				return nil, wrapAtNode(x, fe.err, e.templateName)
-			}
-			return out, nil
-		}
-		if fn, ok := getFilter(x.Name); ok {
-			out := fn(input, args...)
-			if fe, ok := out.(filterError); ok {
-				return nil, wrapAtNode(x, fe.err, e.templateName)
+		// Single dispatch through the unified Filter interface. Positional
+		// filters that don't care about kwargs ignore them via FilterFunc.Apply,
+		// matching Shopify's "extra hash arg is a no-op" semantics.
+		if fn, ok := filters[x.Name]; ok {
+			out, err := fn.Apply(input, args, kwargs)
+			if err != nil {
+				return nil, wrapAtNode(x, err, e.templateName)
 			}
 			return out, nil
 		}

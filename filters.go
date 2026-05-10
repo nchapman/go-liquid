@@ -13,96 +13,136 @@ import (
 	"unicode/utf8"
 )
 
-// FilterFunc is the signature for filter functions. Input is the value
-// being filtered, args are any additional arguments.
+// Filter is the unified filter interface. The evaluator dispatches every
+// {{ x | name: ... }} call through Apply: positional arguments arrive in
+// args, named arguments (`name: x, opt: y`) arrive in kwargs (nil if the
+// template supplied none). Returning a non-nil error aborts the render
+// with a positioned RenderError.
 //
-// To signal a render-time error from a filter, return the value produced
-// by filterErrorf — the evaluator unwraps it into an error from Render.
+// Most built-in filters are infallible and care only about positional
+// args, so they're written against the legacy FilterFunc signature and
+// adapted via FilterFunc.Apply. Filters that need kwargs (currently just
+// `default`) use KwargFilterFunc. New filters that want first-class error
+// returns can implement Filter directly or use FilterFuncE.
+type Filter interface {
+	Apply(input any, args []any, kwargs map[string]any) (any, error)
+}
+
+// FilterFunc is the legacy positional-only signature. Adapted to Filter
+// by ignoring kwargs and unwrapping the filterError sentinel.
 type FilterFunc func(input any, args ...any) any
 
-// filterError is a sentinel value a filter can return to abort rendering
-// with the wrapped error. Plumbed through any rather than the FilterFunc
-// signature so the common-case (infallible) filters stay simple.
+// Apply implements Filter for the positional-only signature.
+func (f FilterFunc) Apply(input any, args []any, _ map[string]any) (any, error) {
+	out := f(input, args...)
+	if fe, ok := out.(filterError); ok {
+		return nil, fe.err
+	}
+	return out, nil
+}
+
+// FilterFuncE is the recommended signature for new filters that may fail
+// or want named-argument support. Returning a non-nil error aborts the
+// render at this filter's source position.
+type FilterFuncE func(input any, args []any, kwargs map[string]any) (any, error)
+
+// Apply implements Filter.
+func (f FilterFuncE) Apply(input any, args []any, kwargs map[string]any) (any, error) {
+	return f(input, args, kwargs)
+}
+
+// filterError is the sentinel returned by filterErrorf so legacy
+// FilterFunc/KwargFilterFunc filters can signal errors through the `any`
+// return without the boilerplate of `(any, error)`. The Apply adapters
+// unwrap it transparently. New filters should implement Filter directly
+// and return real errors.
 type filterError struct{ err error }
 
 func filterErrorf(format string, args ...any) any {
 	return filterError{err: fmt.Errorf(format, args...)}
 }
 
-// filters is the global filter registry.
-var filters = map[string]FilterFunc{
+// pos and kw wrap raw filter functions into the Filter interface so the
+// registry literal below stays tidy.
+func pos(fn FilterFunc) Filter      { return fn }
+func kw(fn KwargFilterFunc) Filter  { return fn }
+
+// filters is the global filter registry, keyed by template name. One
+// table covers both positional and kwarg filters via the Filter
+// interface; the evaluator dispatches through a single lookup.
+var filters = map[string]Filter{
 	// String filters
-	"upcase":        filterUpcase,
-	"downcase":      filterDowncase,
-	"capitalize":    filterCapitalize,
-	"strip":         filterStrip,
-	"lstrip":        filterLstrip,
-	"rstrip":        filterRstrip,
-	"escape":        filterEscape,
-	"split":         filterSplit,
-	"append":        filterAppend,
-	"prepend":       filterPrepend,
-	"replace":       filterReplace,
-	"replace_first": filterReplaceFirst,
-	"remove":        filterRemove,
-	"remove_first":  filterRemoveFirst,
-	"truncate":      filterTruncate,
-	"truncatewords": filterTruncateWords,
-	"slice":         filterSlice,
-	"newline_to_br": filterNewlineToBr,
-	"escape_once":   filterEscapeOnce,
-	"url_encode":    filterURLEncode,
-	"url_decode":    filterURLDecode,
-	"strip_html":    filterStripHTML,
-	"strip_newlines": filterStripNewlines,
-	"squish":        filterSquish,
-	"replace_last":  filterReplaceLast,
-	"remove_last":   filterRemoveLast,
+	"upcase":        pos(filterUpcase),
+	"downcase":      pos(filterDowncase),
+	"capitalize":    pos(filterCapitalize),
+	"strip":         pos(filterStrip),
+	"lstrip":        pos(filterLstrip),
+	"rstrip":        pos(filterRstrip),
+	"escape":        pos(filterEscape),
+	"split":         pos(filterSplit),
+	"append":        pos(filterAppend),
+	"prepend":       pos(filterPrepend),
+	"replace":       pos(filterReplace),
+	"replace_first": pos(filterReplaceFirst),
+	"remove":        pos(filterRemove),
+	"remove_first":  pos(filterRemoveFirst),
+	"truncate":      pos(filterTruncate),
+	"truncatewords": pos(filterTruncateWords),
+	"slice":         pos(filterSlice),
+	"newline_to_br": pos(filterNewlineToBr),
+	"escape_once":   pos(filterEscapeOnce),
+	"url_encode":    pos(filterURLEncode),
+	"url_decode":    pos(filterURLDecode),
+	"strip_html":    pos(filterStripHTML),
+	"strip_newlines": pos(filterStripNewlines),
+	"squish":        pos(filterSquish),
+	"replace_last":  pos(filterReplaceLast),
+	"remove_last":   pos(filterRemoveLast),
 
 	// Base64
-	"base64_encode":          filterBase64Encode,
-	"base64_decode":          filterBase64Decode,
-	"base64_url_safe_encode": filterBase64URLSafeEncode,
-	"base64_url_safe_decode": filterBase64URLSafeDecode,
+	"base64_encode":          pos(filterBase64Encode),
+	"base64_decode":          pos(filterBase64Decode),
+	"base64_url_safe_encode": pos(filterBase64URLSafeEncode),
+	"base64_url_safe_decode": pos(filterBase64URLSafeDecode),
 
 	// Array filters
-	"first":        filterFirst,
-	"last":         filterLast,
-	"size":         filterSize,
-	"join":         filterJoin,
-	"reverse":      filterReverse,
-	"sort":         filterSort,
-	"sort_natural": filterSortNatural,
-	"map":          filterMap,
-	"where":        filterWhere,
-	"reject":       filterReject,
-	"find":         filterFind,
-	"find_index":   filterFindIndex,
-	"has":          filterHas,
-	"uniq":         filterUniq,
-	"compact":      filterCompact,
-	"concat":       filterConcat,
-	"flatten":      filterFlatten,
-	"sum":          filterSum,
+	"first":        pos(filterFirst),
+	"last":         pos(filterLast),
+	"size":         pos(filterSize),
+	"join":         pos(filterJoin),
+	"reverse":      pos(filterReverse),
+	"sort":         pos(filterSort),
+	"sort_natural": pos(filterSortNatural),
+	"map":          pos(filterMap),
+	"where":        pos(filterWhere),
+	"reject":       pos(filterReject),
+	"find":         pos(filterFind),
+	"find_index":   pos(filterFindIndex),
+	"has":          pos(filterHas),
+	"uniq":         pos(filterUniq),
+	"compact":      pos(filterCompact),
+	"concat":       pos(filterConcat),
+	"flatten":      pos(filterFlatten),
+	"sum":          pos(filterSum),
 
-	// `default` lives in kwargFilters because it accepts the `allow_false:`
-	// named arg; positional-only callers keep working through the same path.
+	// `default` accepts the `allow_false:` named arg.
+	"default": kw(filterDefaultKw),
 
 	// Math filters
-	"plus":       filterPlus,
-	"minus":      filterMinus,
-	"times":      filterTimes,
-	"divided_by": filterDividedBy,
-	"modulo":     filterModulo,
-	"abs":        filterAbs,
-	"round":      filterRound,
-	"ceil":       filterCeil,
-	"floor":      filterFloor,
-	"at_least":   filterAtLeast,
-	"at_most":    filterAtMost,
+	"plus":       pos(filterPlus),
+	"minus":      pos(filterMinus),
+	"times":      pos(filterTimes),
+	"divided_by": pos(filterDividedBy),
+	"modulo":     pos(filterModulo),
+	"abs":        pos(filterAbs),
+	"round":      pos(filterRound),
+	"ceil":       pos(filterCeil),
+	"floor":      pos(filterFloor),
+	"at_least":   pos(filterAtLeast),
+	"at_most":    pos(filterAtMost),
 
 	// Date filter
-	"date": filterDate,
+	"date": pos(filterDate),
 }
 
 // String filters
@@ -671,19 +711,19 @@ func equalValues(a, b any) bool {
 
 // Utility filters
 
-// KwargFilterFunc is the signature for filters that accept named
-// arguments. args holds positional arguments; kwargs is the evaluated
-// key:value pairs from the template (e.g. `default: 0, allow_false: true`).
-//
-// Use RegisterKwargFilter to register a custom kwarg-aware filter.
-// Plain (positional-only) filters use FilterFunc and RegisterFilter.
-//
-// To signal a render-time error, return filterErrorf — the evaluator
-// unwraps it the same way it does for FilterFunc.
+// KwargFilterFunc is the legacy signature for filters that accept named
+// arguments. Adapted to Filter via its Apply method, which unwraps the
+// filterError sentinel just like FilterFunc.Apply. New kwarg-aware
+// filters should implement Filter directly (see FilterFuncE).
 type KwargFilterFunc func(input any, args []any, kwargs map[string]any) any
 
-var kwargFilters = map[string]KwargFilterFunc{
-	"default": filterDefaultKw,
+// Apply implements Filter for the kwarg-aware legacy signature.
+func (f KwargFilterFunc) Apply(input any, args []any, kwargs map[string]any) (any, error) {
+	out := f(input, args, kwargs)
+	if fe, ok := out.(filterError); ok {
+		return nil, fe.err
+	}
+	return out, nil
 }
 
 // filterDefaultKw replaces the basic default filter when called with named
@@ -1142,8 +1182,3 @@ func isBlank(v any) bool {
 	return false
 }
 
-// getFilter returns a filter function by name.
-func getFilter(name string) (FilterFunc, bool) {
-	f, ok := filters[name]
-	return f, ok
-}
