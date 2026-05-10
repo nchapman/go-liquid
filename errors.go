@@ -5,6 +5,13 @@ import (
 	"fmt"
 )
 
+// ErrDisabledTag is returned when a template invokes a tag that has been
+// disabled in the current scope. Most commonly: {% render %} disables
+// {% include %} for the duration of the partial, mirroring Ruby Liquid's
+// Tag::Disabler / Tag::Disableable mixins. Use errors.Is to detect:
+// errors.Is(err, ErrDisabledTag).
+var ErrDisabledTag = errors.New("liquid: tag is disabled in this scope")
+
 // ParseError is returned when a template fails to parse. It carries the
 // source position so callers can pinpoint the offending tag, and an
 // optional TemplateName that hosts may set on partials so error messages

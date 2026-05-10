@@ -63,21 +63,48 @@ func newRegisters() *registers {
 
 // evaluator executes a parsed template. cfg is per-Render and shared
 // with partials; regs is per-evaluator (fresh for {% render %}, shared
-// for {% include %}); ctx is the live scope chain.
+// for {% include %}); ctx is the live scope chain. disabledTags is a
+// counter map keyed by tag name — non-zero means the tag is disabled in
+// the current scope. Shared by pointer with sub-evaluators so that
+// {% render %}'s disable of {% include %} survives partial boundaries,
+// matching Ruby's Context#with_disabled_tags semantics.
 type evaluator struct {
 	cfg          *renderConfig
 	regs         *registers
 	ctx          *context
+	disabledTags map[string]int
 	templateName string // optional, surfaced on RenderError; varies per partial
 	partialDepth int
 }
 
 func newEvaluator(data map[string]any) *evaluator {
 	return &evaluator{
-		cfg:  &renderConfig{env: Default()},
-		regs: newRegisters(),
-		ctx:  newContext(data),
+		cfg:          &renderConfig{env: Default()},
+		regs:         newRegisters(),
+		ctx:          newContext(data),
+		disabledTags: map[string]int{},
 	}
+}
+
+// withDisabledTags increments the disable counter for each name in names,
+// runs fn, then decrements. Counters mean nested disables compose: a tag
+// can disable "include" while the caller has also disabled it, and the
+// outer disable survives the inner block's exit.
+func (e *evaluator) withDisabledTags(names []string, fn func() error) error {
+	for _, name := range names {
+		e.disabledTags[name]++
+	}
+	defer func() {
+		for _, name := range names {
+			e.disabledTags[name]--
+		}
+	}()
+	return fn()
+}
+
+// tagDisabled reports whether the named tag is currently disabled.
+func (e *evaluator) tagDisabled(name string) bool {
+	return e.disabledTags[name] > 0
 }
 
 // evaluate writes the template's rendered output to w.
@@ -247,8 +274,15 @@ func (e *evaluator) evalNodeInner(w io.Writer, node Node) error {
 
 // evalRenderTag evaluates {% render %} in an isolated scope. Only explicitly
 // bound variables are visible to the partial; the partial cannot see or
-// modify caller variables.
+// modify caller variables. {% include %} is disabled inside a {% render %}
+// to match Ruby's `disable_tags "include"` declaration on Tags::Render.
 func (e *evaluator) evalRenderTag(w io.Writer, tag *RenderTag) error {
+	return e.withDisabledTags([]string{"include"}, func() error {
+		return e.evalRenderTagInner(w, tag)
+	})
+}
+
+func (e *evaluator) evalRenderTagInner(w io.Writer, tag *RenderTag) error {
 	partial, err := e.loadPartial(tag.Template)
 	if err != nil {
 		return err
@@ -314,6 +348,9 @@ func (e *evaluator) evalRenderTag(w io.Writer, tag *RenderTag) error {
 // evalIncludeTag is the legacy form: shares the parent scope. Variables
 // assigned in the partial leak into the caller.
 func (e *evaluator) evalIncludeTag(w io.Writer, tag *IncludeTag) error {
+	if e.tagDisabled("include") {
+		return fmt.Errorf("%w: include is disabled inside {%% render %%}", ErrDisabledTag)
+	}
 	partial, err := e.loadPartial(tag.Template)
 	if err != nil {
 		return err
@@ -435,6 +472,7 @@ func (e *evaluator) renderPartialIsolated(w io.Writer, partial *Template, data m
 		cfg:          e.cfg,
 		regs:         newRegisters(),
 		ctx:          newContext(data),
+		disabledTags: e.disabledTags, // shared by reference; counter increments survive the boundary
 		templateName: partial.name,
 		partialDepth: e.partialDepth + 1,
 	}

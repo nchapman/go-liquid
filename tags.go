@@ -68,6 +68,17 @@ type TagContext interface {
 	// missing values should consult this instead of choosing a fixed
 	// behavior.
 	StrictVariables() bool
+	// WithDisabledTags runs fn with the named tags disabled in the
+	// current scope. While disabled, any attempt to invoke a listed
+	// tag (including from within partials rendered inside fn) returns
+	// ErrDisabledTag. Disables are counted, so nested calls compose.
+	// Mirrors Ruby Liquid's Tag::Disabler mixin.
+	WithDisabledTags(names []string, fn func() error) error
+	// TagDisabled reports whether the named tag is currently disabled
+	// in the active scope. Custom tags that wish to participate in the
+	// disable mechanism should check this on entry and return
+	// ErrDisabledTag if true. Mirrors Tag::Disableable.
+	TagDisabled(name string) bool
 }
 
 // RegisterTag installs an inline custom tag on the default environment.
@@ -168,6 +179,12 @@ func (c *tagCtx) Eval(expr Expression) (any, error) {
 }
 
 func (c *tagCtx) StrictVariables() bool { return c.ev.cfg.strictVariables }
+
+func (c *tagCtx) WithDisabledTags(names []string, fn func() error) error {
+	return c.ev.withDisabledTags(names, fn)
+}
+
+func (c *tagCtx) TagDisabled(name string) bool { return c.ev.tagDisabled(name) }
 
 func (c *tagCtx) RenderPartial(w io.Writer, name string) error {
 	if c.ev.partialDepth >= maxPartialDepth {
