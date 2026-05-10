@@ -659,6 +659,11 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 				return nil, wrapAtNode(x, fmt.Errorf("undefined variable %q", x.Name), e.templateName)
 			}
 		}
+		// A top-level Drop reached without a property descent (e.g.
+		// `{% if drop %}` or `{{ drop }}`) still needs context — the
+		// usual setDropContext fires inside getPropertyOK, which we
+		// haven't called yet.
+		setDropContext(val, e)
 		return val, nil
 
 	case *LiteralExpr:
@@ -669,7 +674,7 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		val, ok := getPropertyOK(obj, x.Property)
+		val, ok := getPropertyOK(obj, x.Property, e)
 		if !ok && e.cfg.strictVariables {
 			return nil, wrapAtNode(x, fmt.Errorf("undefined property %q", x.Property), e.templateName)
 		}
@@ -684,7 +689,7 @@ func (e *evaluator) evalExpr(expr Expression) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		val, ok := getIndexOK(obj, idx)
+		val, ok := getIndexOK(obj, idx, e)
 		if !ok && e.cfg.strictVariables {
 			return nil, wrapAtNode(x, fmt.Errorf("undefined index %v", idx), e.templateName)
 		}
@@ -879,8 +884,14 @@ func callTemplateMethod(obj any, name string) (any, bool) {
 }
 
 // getProperty returns a property value, or nil if absent.
+//
+// Filter callers reach drop values through this helper; they don't have
+// access to a RenderContext, so a ContextAwareDrop reached only through
+// a filter (e.g. {{ obj | map: "field" }}) won't have its context
+// re-set. The drop will still observe whatever context was set during
+// the most recent variable lookup that materialized it.
 func getProperty(obj any, prop string) any {
-	v, _ := getPropertyOK(obj, prop)
+	v, _ := getPropertyOK(obj, prop, nil)
 	return v
 }
 
@@ -891,7 +902,7 @@ func getProperty(obj any, prop string) any {
 // The Liquid built-ins `first`, `last`, and `size` are always considered
 // present on any value that toSlice/filterSize can handle. Struct method
 // dispatch is also considered present when a matching method is invoked.
-func getPropertyOK(obj any, prop string) (any, bool) {
+func getPropertyOK(obj any, prop string, ctx RenderContext) (any, bool) {
 	if obj == nil {
 		return nil, false
 	}
@@ -900,6 +911,7 @@ func getPropertyOK(obj any, prop string) (any, bool) {
 	// Drop equivalent). When implemented, methods on the underlying type
 	// are NOT auto-dispatched — the Drop is the sole source of truth.
 	if d, ok := obj.(Drop); ok {
+		setDropContext(d, ctx)
 		v, present := d.LiquidLookup(prop)
 		return v, present
 	}
@@ -962,19 +974,19 @@ func getPropertyOK(obj any, prop string) (any, bool) {
 
 // getIndex returns an element by index, or nil if absent / out of range.
 func getIndex(obj any, idx any) any {
-	v, _ := getIndexOK(obj, idx)
+	v, _ := getIndexOK(obj, idx, nil)
 	return v
 }
 
 // getIndexOK is the strict-aware variant. Reports false when the
 // requested index is out of range or the object isn't indexable.
-func getIndexOK(obj any, idx any) (any, bool) {
+func getIndexOK(obj any, idx any, ctx RenderContext) (any, bool) {
 	if obj == nil {
 		return nil, false
 	}
 
 	if s, ok := idx.(string); ok {
-		return getPropertyOK(obj, s)
+		return getPropertyOK(obj, s, ctx)
 	}
 
 	// Reject fractional floats outright. Ruby's Utils.to_liquid_value
@@ -1019,7 +1031,7 @@ func getIndexOK(obj any, idx any) (any, bool) {
 		if i < 0 {
 			return nil, false
 		}
-		return getPropertyOK(obj, strconv.Itoa(i))
+		return getPropertyOK(obj, strconv.Itoa(i), ctx)
 	default:
 		rv := reflect.ValueOf(obj)
 		if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
@@ -1034,7 +1046,7 @@ func getIndexOK(obj any, idx any) (any, bool) {
 			if i < 0 {
 				return nil, false
 			}
-			return getPropertyOK(obj, strconv.Itoa(i))
+			return getPropertyOK(obj, strconv.Itoa(i), ctx)
 		}
 	}
 
