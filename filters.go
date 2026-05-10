@@ -7,6 +7,7 @@ import (
 	"math"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -270,20 +271,21 @@ func filterSlice(input any, args ...any) any {
 		length = int(toInt(toNumber(args[1])))
 	}
 
-	// Handle string slicing
+	// Handle string slicing — Shopify slices by character (rune), not byte,
+	// so multi-byte UTF-8 inputs slice cleanly.
 	if s, ok := input.(string); ok {
-		// Handle negative offset
+		runes := []rune(s)
 		if offset < 0 {
-			offset = len(s) + offset
+			offset = len(runes) + offset
 		}
 		if offset < 0 {
 			offset = 0
 		}
-		if offset >= len(s) {
+		if offset >= len(runes) {
 			return ""
 		}
-		end := min(offset+length, len(s))
-		return s[offset:end]
+		end := min(offset+length, len(runes))
+		return string(runes[offset:end])
 	}
 
 	// Handle array slicing. Always return a (possibly empty) []any so that
@@ -309,7 +311,10 @@ func filterSlice(input any, args ...any) any {
 
 func filterNewlineToBr(input any, args ...any) any {
 	s := toString(input)
-	return strings.ReplaceAll(s, "\n", "<br />")
+	// Shopify inserts the <br /> before the newline rather than replacing
+	// it, so source line breaks survive into the rendered output.
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\n", "<br />\n")
 }
 
 // Array filters
@@ -576,16 +581,22 @@ func filterFlatten(input any, args ...any) any {
 	if slice == nil {
 		return []any{}
 	}
-
 	var result []any
-	for _, item := range slice {
-		// If item is a slice, flatten it
-		if itemSlice := toSlice(item); itemSlice != nil {
-			result = append(result, itemSlice...)
-		} else {
+	var walk func([]any)
+	walk = func(items []any) {
+		for _, item := range items {
+			// Mirror Ruby Array#flatten: recursively flatten any nested
+			// arrays, but never descend into strings (toSlice splits them).
+			if _, isString := item.(string); !isString {
+				if sub := toSlice(item); sub != nil {
+					walk(sub)
+					continue
+				}
+			}
 			result = append(result, item)
 		}
 	}
+	walk(slice)
 	return result
 }
 
@@ -1015,13 +1026,13 @@ func toNumber(v any) any {
 	case float64:
 		return val
 	case string:
-		// Try parsing as int first, then float
-		var i int64
-		if _, err := fmt.Sscanf(val, "%d", &i); err == nil {
+		// strconv requires full consumption — Sscanf("%d", "5.5") would
+		// silently succeed with 5 and lose the fractional part.
+		s := strings.TrimSpace(val)
+		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
 			return i
 		}
-		var f float64
-		if _, err := fmt.Sscanf(val, "%f", &f); err == nil {
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
 			return f
 		}
 		return int64(0)

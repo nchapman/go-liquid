@@ -12,4 +12,6 @@ slice str: Ali
 slice negative: ice
 lstrip: [hello  ]
 rstrip: [  hello]
-newline_to_br: line1<br />line2<br />line3
+newline_to_br: line1<br />
+line2<br />
+line3
