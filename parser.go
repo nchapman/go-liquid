@@ -1188,6 +1188,9 @@ func (p *parser) parseCommentTag() (Node, error) {
 	column := p.curToken.column
 	p.nextToken() // consume 'comment'
 
+	// Ruby tolerates trailing tokens like `{% comment foo %}`; drain them.
+	p.drainToTagClose()
+
 	if err := p.validateTagClose(); err != nil {
 		return nil, err
 	}
@@ -1974,6 +1977,18 @@ func (p *parser) validateTagClose() error {
 	p.trimNextText = p.curToken.typ == tokenTagTrimR
 	// Don't call nextToken() - we'll scan raw content directly
 	return nil
+}
+
+// drainToTagClose silently skips any tokens before the closing %}/-%} without
+// consuming the close itself. Used by tags whose Ruby parser tolerates trailing
+// garbage and which then need to hand control back to the lexer for raw-text
+// scanning (e.g. `{% comment foo %}`, `{% raw bar %}`).
+func (p *parser) drainToTagClose() {
+	for p.curToken.typ != tokenTagClose &&
+		p.curToken.typ != tokenTagTrimR &&
+		p.curToken.typ != tokenEOF {
+		p.nextToken()
+	}
 }
 
 // parseInt parses an integer literal.

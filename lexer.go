@@ -620,7 +620,7 @@ func (l *lexer) scanCommentBlock() (content string, line, col int, trimRight boo
 			depth--
 			l.advance(10) // past "endcomment"
 			if depth == 0 {
-				if trimRight, ok := l.tryCloseTag(); ok {
+				if trimRight, ok := l.tryCloseTagTolerant(); ok {
 					l.mode = modeText
 					return l.input[startPos:savePos], startLine, startCol, trimRight
 				}
@@ -667,6 +667,33 @@ func (l *lexer) skipPastTagClose() {
 		l.readChar() // %
 		l.readChar() // }
 	}
+}
+
+// tryCloseTagTolerant is like tryCloseTag but skips arbitrary trailing tokens
+// before the closing `%}`/`-%}`. Ruby Liquid tolerates `{% endcomment foo %}`
+// and `{% endraw bar %}`; only :strict2 rejects them.
+func (l *lexer) tryCloseTagTolerant() (trimRight, ok bool) {
+	startPos := l.pos
+	for l.ch != 0 {
+		if l.ch == '-' && l.peekChar() == '%' {
+			trimRight = true
+			l.readChar()
+		}
+		if l.ch == '%' && l.peekChar() == '}' {
+			l.readChar()
+			l.readChar()
+			return trimRight, true
+		}
+		// Don't run past a `{%` — that would consume a following tag's opener.
+		if l.ch == '{' && l.peekChar() == '%' {
+			l.pos = startPos
+			l.readPos = startPos + 1
+			l.ch = l.input[startPos]
+			return false, false
+		}
+		l.readChar()
+	}
+	return false, false
 }
 
 // tryCloseTag attempts to consume the trailing whitespace, optional `-`, and

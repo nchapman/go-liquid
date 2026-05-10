@@ -55,22 +55,21 @@ func TestUpstream_CommentTagUnit_NestedCommentTagWithExtraStrings(t *testing.T) 
 }
 
 func TestUpstream_CommentTagUnit_IgnoresDelimiterWithExtraStrings(t *testing.T) {
-	t.Skip("go-liquid: `{% endcomment endcomment %}` is not matched as the endtag; Ruby tolerates extra args on endcomment")
 	renderEq(t, "extra",
 		"{% comment %}don't render{% endcomment endcomment %}done",
 		nil, "done")
 }
 
 func TestUpstream_CommentTagUnit_DelimiterCanHaveExtraStrings(t *testing.T) {
-	t.Skip("go-liquid rejects extra args after `{% comment foo %}`; Ruby tolerates")
 	renderEq(t, "extra-on-open",
 		"{% comment foo %}don't render{% endcomment %}done",
 		nil, "done")
 }
 
 func TestUpstream_CommentTagUnit_WithWhitespaceControl(t *testing.T) {
-	t.Skip("go-liquid trim around `{%- comment -%}...{%- endcomment -%}` eats both leading and trailing two-space pads")
-	renderEq(t, "ws", "  {%- comment -%}gone{%- endcomment -%}  ", nil, "    ")
+	renderEq(t, "ws-left", "      {%- comment -%}123{%- endcomment -%}Hello!", nil, "Hello!")
+	renderEq(t, "ws-right", "{%- comment -%}123{%- endcomment -%}     Hello!", nil, "Hello!")
+	renderEq(t, "ws-both", "      {%- comment -%}123{%- endcomment -%}     Hello!", nil, "Hello!")
 }
 
 func TestUpstream_CommentTagUnit_DontOverrideLiquidTagWhitespaceControl(t *testing.T) {
