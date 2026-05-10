@@ -1297,11 +1297,20 @@ func isNumeric(v any) bool {
 }
 
 func (e *evaluator) evalCycleTag(w io.Writer, tag *CycleTag) error {
-	// Generate a unique key for this cycle
-	// Use the group name if provided, otherwise create one from values
-	key := tag.GroupName
-	if key == "" {
-		// Generate a key from the values for unnamed cycles
+	// Generate a unique key for this cycle.
+	// Named cycles: evaluate the group expression at render time so that a
+	// variable lookup as the group name works (Ruby parity).
+	var key string
+	if tag.GroupExpr != nil {
+		val, err := e.evalExpr(tag.GroupExpr)
+		if err != nil {
+			return err
+		}
+		key = toString(val)
+	} else if tag.GroupName != "" {
+		key = tag.GroupName
+	} else {
+		// Generate a key from the values for unnamed cycles.
 		var parts []string
 		for _, v := range tag.Values {
 			val, err := e.evalExpr(v)

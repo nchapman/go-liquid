@@ -1216,15 +1216,23 @@ func (p *parser) parseCycleTag() (Node, error) {
 		Column: column,
 	}
 
-	// Check for named cycle: {% cycle 'group': 'a', 'b' %}
-	// First value, then check if followed by colon
+	// Empty argument list is a syntax error.
+	if p.curToken.typ == tokenTagClose || p.curToken.typ == tokenTagTrimR {
+		return nil, newParseError(line, column,
+			"Syntax Error in 'cycle' - Valid syntax: cycle [name :] var [, var2, var3 ...]")
+	}
+
+	// Check for named cycle: {% cycle 'group': 'a', 'b' %} or {% cycle var: 'a', 'b' %}
 	firstExpr, err := p.parseAtom()
 	if err != nil {
 		return nil, err
 	}
 
 	if p.curToken.typ == tokenColon {
-		// Named cycle - first value was the group name
+		// Named cycle - the first expression is the group name.
+		// Keep both the literal-string fast path (for keying when literal) and
+		// the full expression (so variable lookups evaluate at render time).
+		tag.GroupExpr = firstExpr
 		if lit, ok := firstExpr.(*LiteralExpr); ok {
 			if name, ok := lit.Value.(string); ok {
 				tag.GroupName = name
@@ -1241,9 +1249,12 @@ func (p *parser) parseCycleTag() (Node, error) {
 
 	tag.Values = append(tag.Values, firstExpr)
 
-	// Parse remaining values separated by commas
+	// Parse remaining values separated by commas, allowing a trailing comma.
 	for p.curToken.typ == tokenComma {
 		p.nextToken() // consume ','
+		if p.curToken.typ == tokenTagClose || p.curToken.typ == tokenTagTrimR {
+			break
+		}
 		expr, err := p.parseAtom()
 		if err != nil {
 			return nil, err

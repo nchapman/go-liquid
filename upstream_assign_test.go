@@ -53,6 +53,8 @@ func TestUpstreamAssign(t *testing.T) {
 		// tags with bad bodies still surface a parse error. Expanding
 		// lax recovery to cover known-tag bodies is its own change.
 		t.Skip("TODO: extend ErrorModeLax to recover from malformed tag bodies")
+		// In :lax mode the malformed assign should render as "" (no error).
+		renderEq(t, "lax-malformed-assign", "{% assign foo = ('X' | downcase) %}", nil, "")
 	})
 
 	t.Run("test_expression_with_whitespace_in_square_brackets", func(t *testing.T) {

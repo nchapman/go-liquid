@@ -299,7 +299,8 @@ func (t *RawTag) Pos() (line, column int) { return t.Line, t.Column }
 
 // CycleTag represents {% cycle "a", "b", "c" %} or {% cycle "group": "a", "b", "c" %}.
 type CycleTag struct {
-	GroupName string       // optional group name
+	GroupName string       // legacy: literal string group name
+	GroupExpr Expression   // optional group-name expression (evaluated at render)
 	Values    []Expression // values to cycle through
 	Line      int
 	Column    int
