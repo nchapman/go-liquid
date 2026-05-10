@@ -1024,6 +1024,11 @@ func (p *parser) parseForCollection(line, column int) (Expression, error) {
 // contextually (by literal) so they remain valid variable names elsewhere.
 func (p *parser) parseForParams(tag *ForTag) error {
 	for {
+		// Ruby allows optional commas between params: `for i in array, limit: 4, offset: 2`.
+		if p.curToken.typ == tokenComma {
+			p.nextToken()
+			continue
+		}
 		switch {
 		case p.isWord("limit"):
 			limit, err := p.parseForKeywordArg("limit")
@@ -1040,8 +1045,10 @@ func (p *parser) parseForParams(tag *ForTag) error {
 			p.nextToken()
 			// Shopify accepts `offset: continue` to resume from where the
 			// previous render of this same for-tag stopped (pagination).
+			// Repeated `offset:` — last wins (Ruby attribute-hash semantics).
 			if p.isWord("continue") {
 				tag.OffsetContinue = true
+				tag.Offset = nil
 				p.nextToken()
 				continue
 			}
@@ -1050,6 +1057,7 @@ func (p *parser) parseForParams(tag *ForTag) error {
 				return err
 			}
 			tag.Offset = offset
+			tag.OffsetContinue = false
 		case p.isWord("reversed"):
 			p.nextToken()
 			tag.Reversed = true
