@@ -182,6 +182,21 @@ func (e *evaluator) evalNodeInner(w io.Writer, node Node) error {
 		if n.Expr == nil {
 			return nil // {{}} renders the empty string
 		}
+		// Ruby renders a Range expression directly in output as "a..b".
+		// Elsewhere (for/contains/equality) we materialize to a slice, so
+		// only this output path needs the special form.
+		if r, ok := n.Expr.(*RangeExpr); ok {
+			start, err := e.evalForInt(r.Start)
+			if err != nil {
+				return err
+			}
+			end, err := e.evalForInt(r.End)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(w, "%d..%d", start, end)
+			return err
+		}
 		val, err := e.evalExpr(n.Expr)
 		if err != nil {
 			return err

@@ -68,7 +68,6 @@ func TestUpstream_Expression_Range(t *testing.T) {
 }
 
 func TestUpstream_Expression_Range_OutputAsString(t *testing.T) {
-	t.Skip("Ruby Range#to_s renders '3..4'; go-liquid materializes range to slice and renders as '34'")
 	renderEq(t, "spaced-range", "{{ ( 3 .. 4 ) }}", nil, "3..4")
 }
 

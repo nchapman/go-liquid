@@ -225,7 +225,6 @@ func TestUpstream_Context_Ranges(t *testing.T) {
 }
 
 func TestUpstream_Context_Ranges_OutputAsString(t *testing.T) {
-	t.Skip("Ruby Range#to_s renders '1..5'; go-liquid materializes to slice")
 	renderEq(t, "out", "{{ (1..5) }}", nil, "1..5")
 	renderEq(t, "dyn", "{{ (1..test) }}", map[string]any{"test": "5"}, "1..5")
 	renderEq(t, "both-dyn", "{{ (test..test) }}", map[string]any{"test": "5"}, "5..5")
