@@ -59,6 +59,15 @@ type TagContext interface {
 	// Mirrors Ruby Liquid's PartialCache.load + the shared-scope render
 	// path used by the built-in Include tag.
 	RenderPartial(w io.Writer, name string) error
+	// Eval evaluates a Liquid expression against the current scope.
+	// Pair with ParseExpression at parse time so a custom tag can
+	// accept Liquid syntax in its arguments.
+	Eval(expr Expression) (any, error)
+	// StrictVariables reports whether the active Render was started
+	// with the StrictVariables option. Custom tags that interpret
+	// missing values should consult this instead of choosing a fixed
+	// behavior.
+	StrictVariables() bool
 }
 
 // RegisterTag installs an inline custom tag on the default environment.
@@ -153,6 +162,12 @@ func (c *tagCtx) RenderBody(w io.Writer) error {
 	}
 	return c.ev.evalNodes(w, c.body)
 }
+
+func (c *tagCtx) Eval(expr Expression) (any, error) {
+	return c.ev.evalExpr(expr)
+}
+
+func (c *tagCtx) StrictVariables() bool { return c.ev.cfg.strictVariables }
 
 func (c *tagCtx) RenderPartial(w io.Writer, name string) error {
 	if c.ev.partialDepth >= maxPartialDepth {
