@@ -7,6 +7,7 @@ import (
 	"math"
 	"reflect"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1315,6 +1316,8 @@ func toString(v any) string {
 			b.WriteString(toString(e))
 		}
 		return b.String()
+	case map[string]any:
+		return rubyHashToS(val)
 	case fmt.Stringer:
 		return val.String()
 	default:
@@ -1326,8 +1329,96 @@ func toString(v any) string {
 			}
 			return b.String()
 		}
+		if rv.Kind() == reflect.Map {
+			m := make(map[string]any, rv.Len())
+			iter := rv.MapRange()
+			for iter.Next() {
+				m[fmt.Sprint(iter.Key().Interface())] = iter.Value().Interface()
+			}
+			return rubyHashToS(m)
+		}
 		return fmt.Sprintf("%v", val)
 	}
+}
+
+// rubyHashToS formats a map in Ruby Hash#to_s style: {"k"=>"v", ...}. Keys
+// are sorted alphabetically for deterministic output (Go map iteration is
+// random; Ruby preserves insertion order). Nested values use rubyInspect
+// (strings quoted, arrays as `[1, 2, 3]`, nested hashes recurse).
+func rubyHashToS(m map[string]any) string {
+	if len(m) == 0 {
+		return "{}"
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteByte('{')
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(rubyInspect(k))
+		b.WriteString("=>")
+		b.WriteString(rubyInspect(m[k]))
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
+// rubyInspect renders a value the way Ruby's #inspect would when it appears
+// nested inside a Hash or Array: strings are double-quoted, nil is "nil",
+// arrays use [a, b], hashes use {k=>v}, numbers/bools use their literal form.
+func rubyInspect(v any) string {
+	if v == nil {
+		return "nil"
+	}
+	switch val := v.(type) {
+	case string:
+		return `"` + val + `"`
+	case bool:
+		if val {
+			return "true"
+		}
+		return "false"
+	case []any:
+		var b strings.Builder
+		b.WriteByte('[')
+		for i, e := range val {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(rubyInspect(e))
+		}
+		b.WriteByte(']')
+		return b.String()
+	case map[string]any:
+		return rubyHashToS(val)
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array:
+		var b strings.Builder
+		b.WriteByte('[')
+		for i := range rv.Len() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(rubyInspect(rv.Index(i).Interface()))
+		}
+		b.WriteByte(']')
+		return b.String()
+	case reflect.Map:
+		m := make(map[string]any, rv.Len())
+		iter := rv.MapRange()
+		for iter.Next() {
+			m[fmt.Sprint(iter.Key().Interface())] = iter.Value().Interface()
+		}
+		return rubyHashToS(m)
+	}
+	return toString(v)
 }
 
 // toSlice converts any value to a slice.
