@@ -308,14 +308,12 @@ func TestUpstreamRenderTag(t *testing.T) {
 	})
 
 	t.Run("test_render_with_invalid_expression", func(t *testing.T) {
-		t.Skip("TODO: Ruby :lax/:strict permissively parse `with foo=>bar`; go-liquid currently rejects")
 		if _, err := Parse(`{% render "snippet" with foo=>bar %}`); err != nil {
 			t.Errorf("lax/strict should accept malformed render `with` expr; got %v", err)
 		}
 	})
 
 	t.Run("test_render_attribute_with_invalid_expression", func(t *testing.T) {
-		t.Skip("TODO: Ruby :lax/:strict permissively parse `key: foo=>bar`; go-liquid currently rejects")
 		if _, err := Parse(`{% render "snippet", key: foo=>bar %}`); err != nil {
 			t.Errorf("lax/strict should accept malformed render kwarg; got %v", err)
 		}

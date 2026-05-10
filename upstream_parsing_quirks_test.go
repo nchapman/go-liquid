@@ -46,7 +46,6 @@ func TestUpstream_ParsingQuirks_UnexpectedCharactersSyntaxError(t *testing.T) {
 }
 
 func TestUpstream_ParsingQuirks_NoErrorOnLaxEmptyFilter(t *testing.T) {
-	t.Skip("Ruby lax mode tolerates trailing/leading empty filter pipes ('{{test |a|b|}}', '{{|test|}}'); go-liquid rejects them")
 	for _, src := range []string{"{{test |a|b|}}", "{{test}}", "{{|test|}}"} {
 		if _, err := Parse(src); err != nil {
 			t.Fatalf("lax parse %q: %v", src, err)
@@ -55,14 +54,12 @@ func TestUpstream_ParsingQuirks_NoErrorOnLaxEmptyFilter(t *testing.T) {
 }
 
 func TestUpstream_ParsingQuirks_MeaninglessParensLax(t *testing.T) {
-	t.Skip("go-liquid: parenthesized boolean groupings in {% if %} are parsed as ranges; Ruby lax mode silently flattens them")
 	d := map[string]any{"b": "bar", "c": "baz"}
 	src := "{% if a == 'foo' or (b == 'bar' and c == 'baz') or false %} YES {% endif %}"
 	renderEq(t, "parens", src, d, " YES ")
 }
 
 func TestUpstream_ParsingQuirks_UnexpectedCharactersSilentlyEatLogicLax(t *testing.T) {
-	t.Skip("Ruby lax silently strips '&&' / '||' and re-evaluates; go-liquid parses them literally or errors")
 	renderEq(t, "and", "{% if true && false %} YES {% endif %}", nil, " YES ")
 	renderEq(t, "or", "{% if false || true %} YES {% endif %}", nil, "")
 }
@@ -84,7 +81,6 @@ func TestUpstream_ParsingQuirks_InvalidVariablesWork(t *testing.T) {
 }
 
 func TestUpstream_ParsingQuirks_ExtraDotsInRanges(t *testing.T) {
-	t.Skip("Ruby lax mode tolerates '(1...5)' (3 dots); go-liquid range syntax requires exactly two")
 	renderEq(t, "extra-dots", "{% for i in (1...5) %}{{ i }}{% endfor %}", nil, "12345")
 }
 

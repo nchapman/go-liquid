@@ -821,7 +821,8 @@ func (p *parser) parseCaseTag() (Node, error) {
 		return nil, err
 	}
 
-	err = p.expectTagClose()
+	// Tolerate trailing args after the case value, e.g. `{% case 1 bar %}`.
+	err = p.drainAndExpectTagClose()
 	if err != nil {
 		return nil, err
 	}
@@ -863,7 +864,9 @@ func (p *parser) parseCaseTag() (Node, error) {
 			break
 		}
 
-		err = p.expectTagClose()
+		// Tolerate trailing args after the final when value, e.g.
+		// `{% when 1 bar %}`.
+		err = p.drainAndExpectTagClose()
 		if err != nil {
 			return nil, err
 		}
@@ -1016,6 +1019,10 @@ func (p *parser) parseForCollection(line, column int) (Expression, error) {
 			"expected '..' in range, got %q", p.curToken.literal)
 	}
 	p.nextToken() // consume ..
+	// Tolerate extra dots (Ruby lax `(1...5)` is treated as `(1..5)`).
+	for p.curToken.typ == tokenDot {
+		p.nextToken()
+	}
 	end, err := p.parsePrimary()
 	if err != nil {
 		return nil, err
@@ -1240,7 +1247,7 @@ func (p *parser) parseCycleTag() (Node, error) {
 	}
 
 	// Check for named cycle: {% cycle 'group': 'a', 'b' %} or {% cycle var: 'a', 'b' %}
-	firstExpr, err := p.parseAtom()
+	firstExpr, err := p.parsePrimary()
 	if err != nil {
 		return nil, err
 	}
@@ -1258,7 +1265,7 @@ func (p *parser) parseCycleTag() (Node, error) {
 		p.nextToken() // consume ':'
 
 		// Parse first actual value
-		firstExpr, err = p.parseAtom()
+		firstExpr, err = p.parsePrimary()
 		if err != nil {
 			return nil, err
 		}
@@ -1272,7 +1279,7 @@ func (p *parser) parseCycleTag() (Node, error) {
 		if p.curToken.typ == tokenTagClose || p.curToken.typ == tokenTagTrimR {
 			break
 		}
-		expr, err := p.parseAtom()
+		expr, err := p.parsePrimary()
 		if err != nil {
 			return nil, err
 		}
@@ -1463,11 +1470,23 @@ func (p *parser) parsePartialTag(isolated bool) (Node, error) {
 
 // parseExpression parses an expression with optional `| filter` chain.
 func (p *parser) parseExpression() (Expression, error) {
+	// Tolerate leading empty pipes (`{{|x|}}`): Ruby :lax silently accepts
+	// them — the variable parser treats the spurious `|` as noise.
+	for p.curToken.typ == tokenPipe {
+		p.nextToken()
+	}
 	expr, err := p.parseOr()
 	if err != nil {
 		return nil, err
 	}
 	for p.curToken.typ == tokenPipe {
+		// Trailing empty pipes (`{{x |}}`) and consecutive empty pipes
+		// (`{{x ||a}}`) are also tolerated. Stop applying filters when
+		// the next token isn't a filter name.
+		if !p.peekTokenIs(tokenIdent) {
+			p.nextToken()
+			continue
+		}
 		expr, err = p.parseFilter(expr)
 		if err != nil {
 			return nil, err
@@ -1560,6 +1579,22 @@ func (p *parser) parseLogical() (Expression, error) {
 	left, err := p.parseContains()
 	if err != nil {
 		return nil, err
+	}
+
+	// Ruby lax tolerance: `&&` and `||` are silently *stripped* — the
+	// operator and its right-hand operand are dropped, the left side
+	// stands alone. Counter-intuitive, but it matches Ruby Liquid's
+	// QuotedFragment-based tolerance (the second `&`/`|` and following
+	// expression fall outside the recognized token grammar).
+	if doubled, _ := p.matchDoubledLogicalOp(); doubled {
+		p.nextToken()
+		p.nextToken()
+		// Discard the right operand (we still parse it so we advance past
+		// it, but throw the result away).
+		if _, err := p.parseLogical(); err != nil {
+			return nil, err
+		}
+		return left, nil
 	}
 
 	if p.curToken.typ == tokenAnd || p.curToken.typ == tokenOr {
@@ -1681,6 +1716,21 @@ func (p *parser) parsePrimary() (Expression, error) {
 			expr = &IndexExpr{Object: expr, Index: index, Line: line, Column: column}
 
 		default:
+			// Ruby lax tolerance: `foo=>bar` (fat-arrow leaking from Ruby
+			// hash syntax) — drop `=>` and the trailing primary. Tests in
+			// upstream cycle/include/render/tablerow exercises this.
+			if p.curToken.typ == tokenAssign {
+				s := p.snapshot()
+				p.nextToken()
+				if p.curToken.typ == tokenGt {
+					p.nextToken()
+					if _, err := p.parsePrimary(); err != nil {
+						return nil, err
+					}
+					continue
+				}
+				p.restore(s)
+			}
 			return expr, nil
 		}
 	}
@@ -1742,28 +1792,40 @@ func (p *parser) parseAtom() (Expression, error) {
 		return &LiteralExpr{Value: blankValue{}, Line: line, Column: column}, nil
 
 	case tokenLParen:
-		// Parens in Liquid only delimit ranges: `(start..end)`. Ruby
-		// Liquid rejects parenthesized grouping in any other context.
+		// `(start..end)` is the canonical range form. We also accept
+		// `(expr)` as a grouping construct: this is needed so that
+		// `{% if (a == b and c == d) %}` parses (Ruby lax mode silently
+		// permits this; literal Ruby Liquid rejected it).
 		p.nextToken() // consume (
-		start, err := p.parsePrimary()
+		first, err := p.parseOr()
 		if err != nil {
 			return nil, err
 		}
-		if p.curToken.typ != tokenRange {
-			return nil, newParseError(p.curToken.line, p.curToken.column,
-				"expected '..' in range, got %q", p.curToken.literal)
-		}
-		p.nextToken() // consume ..
-		end, err := p.parsePrimary()
-		if err != nil {
-			return nil, err
+		if p.curToken.typ == tokenRange {
+			p.nextToken() // consume ..
+			// Tolerate extra dots: `(1...5)` lexes `1`, `..`, `.`, `5`.
+			// Ruby lax mode silently accepts the third dot. Drain any
+			// dots before the end bound.
+			for p.curToken.typ == tokenDot {
+				p.nextToken()
+			}
+			end, err := p.parseOr()
+			if err != nil {
+				return nil, err
+			}
+			if p.curToken.typ != tokenRParen {
+				return nil, newParseError(p.curToken.line, p.curToken.column,
+					"expected ')' to close range, got %q", p.curToken.literal)
+			}
+			p.nextToken()
+			return &RangeExpr{Start: first, End: end, Line: line, Column: column}, nil
 		}
 		if p.curToken.typ != tokenRParen {
 			return nil, newParseError(p.curToken.line, p.curToken.column,
-				"expected ')' to close range, got %q", p.curToken.literal)
+				"expected ')' to close group, got %q", p.curToken.literal)
 		}
 		p.nextToken()
-		return &RangeExpr{Start: start, End: end, Line: line, Column: column}, nil
+		return first, nil
 
 	case tokenMinus:
 		// Unary minus for negative numbers
@@ -1827,6 +1889,31 @@ func (p *parser) restore(s parserSnapshot) {
 	p.l.mode = s.mode
 }
 
+// matchDoubledLogicalOp reports whether the current+peek tokens form
+// `&&` or `||` (Ruby lax mode treats both as noise to skip — the operator
+// and its right operand are dropped, leaving only the left side).
+// Returns the conceptual operator name ("and"/"or") for callers that
+// want to log or otherwise distinguish the two.
+func (p *parser) matchDoubledLogicalOp() (matched bool, op string) {
+	switch {
+	case p.curToken.typ == tokenIllegal && p.curToken.literal == "&":
+		s := p.snapshot()
+		defer p.restore(s)
+		p.nextToken()
+		if p.curToken.typ == tokenIllegal && p.curToken.literal == "&" {
+			return true, "and"
+		}
+	case p.curToken.typ == tokenPipe:
+		s := p.snapshot()
+		defer p.restore(s)
+		p.nextToken()
+		if p.curToken.typ == tokenPipe {
+			return true, "or"
+		}
+	}
+	return false, ""
+}
+
 // peekTokenIs reports whether the token immediately following curToken
 // has the given type. State is saved and restored so callers see no side
 // effects.
@@ -1861,6 +1948,19 @@ func (p *parser) expectTagClose() error {
 	p.trimNextText = p.curToken.typ == tokenTagTrimR
 	p.nextToken()
 	return nil
+}
+
+// drainAndExpectTagClose silently swallows any extra tokens before `%}`.
+// Used by tags whose Ruby parsers tolerate trailing garbage (e.g.
+// `{% case 1 bar %}` or `{% when 1 bar %}`). Mirrors Ruby :lax/:strict
+// tolerance — :strict2 would reject these.
+func (p *parser) drainAndExpectTagClose() error {
+	for p.curToken.typ != tokenTagClose &&
+		p.curToken.typ != tokenTagTrimR &&
+		p.curToken.typ != tokenEOF {
+		p.nextToken()
+	}
+	return p.expectTagClose()
 }
 
 // validateTagClose validates but doesn't advance past a tag close token (%} or -%}).

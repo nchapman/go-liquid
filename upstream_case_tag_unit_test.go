@@ -9,13 +9,11 @@ func TestUpstream_CaseTagUnit_CaseNodelist(t *testing.T) {
 }
 
 func TestUpstream_CaseTagUnit_CaseWithTrailingElement(t *testing.T) {
-	t.Skip("go-liquid rejects `{% case 1 bar %}` extra args; Ruby lax/strict tolerate")
 	src := "{%- case 1 bar -%}{%- when 1 -%}one{%- else -%}two{%- endcase -%}"
 	renderEq(t, "trailing", src, nil, "one")
 }
 
 func TestUpstream_CaseTagUnit_CaseWhenWithTrailingElement(t *testing.T) {
-	t.Skip("go-liquid rejects trailing args after `{% when 1 bar %}`; Ruby lax/strict tolerate, strict2 rejects")
 	src := "{%- case 1 -%}{%- when 1 bar -%}one{%- else -%}two{%- endcase -%}"
 	renderEq(t, "trailing-when", src, nil, "one")
 }

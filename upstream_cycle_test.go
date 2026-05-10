@@ -88,7 +88,6 @@ func TestUpstreamCycleTag(t *testing.T) {
 	})
 
 	t.Run("test_cycle_name_with_invalid_expression", func(t *testing.T) {
-		t.Skip("TODO: Ruby :lax/:strict parses `foo=>bar` permissively in cycle name position")
 		src := "{% for i in (1..3) %}\n  {% cycle foo=>bar: \"a\", \"b\" %}\n{% endfor %}\n"
 		if _, err := Parse(src); err != nil {
 			t.Errorf("lax/strict should accept malformed cycle name; got %v", err)
@@ -96,7 +95,6 @@ func TestUpstreamCycleTag(t *testing.T) {
 	})
 
 	t.Run("test_cycle_variable_with_invalid_expression", func(t *testing.T) {
-		t.Skip("TODO: Ruby :lax/:strict parses `foo=>bar` permissively in cycle var position")
 		src := "{% for i in (1..3) %}\n  {% cycle foo=>bar, \"a\", \"b\" %}\n{% endfor %}\n"
 		if _, err := Parse(src); err != nil {
 			t.Errorf("lax/strict should accept malformed cycle var; got %v", err)

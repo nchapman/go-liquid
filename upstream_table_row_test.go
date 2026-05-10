@@ -224,7 +224,6 @@ func TestUpstreamTableRowTag(t *testing.T) {
 	})
 
 	t.Run("test_tablerow_with_invalid_expression_strict_vs_strict2", func(t *testing.T) {
-		t.Skip("TODO: Ruby :lax/:strict tolerate `limit: foo=>bar` and render an empty row; go-liquid currently rejects")
 		renderEq(t, "lax-ignores-bad-expr",
 			"{% tablerow i in (1..5) limit: foo=>bar %}{{ i }}{% endtablerow %}",
 			nil, "<tr class=\"row1\">\n</tr>\n")

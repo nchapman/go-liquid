@@ -280,21 +280,18 @@ func TestUpstreamIncludeTag(t *testing.T) {
 	})
 
 	t.Run("test_include_template_with_invalid_expression", func(t *testing.T) {
-		t.Skip("TODO: Ruby :lax/:strict permissively accept `{% include foo=>bar %}`; go-liquid currently rejects")
 		if _, err := Parse("{% include foo=>bar %}"); err != nil {
 			t.Errorf("lax/strict should accept malformed include name; got %v", err)
 		}
 	})
 
 	t.Run("test_include_with_invalid_expression", func(t *testing.T) {
-		t.Skip("TODO: Ruby :lax/:strict permissively accept `with foo=>bar`; go-liquid currently rejects")
 		if _, err := Parse(`{% include "snippet" with foo=>bar %}`); err != nil {
 			t.Errorf("lax/strict should accept malformed include `with` expr; got %v", err)
 		}
 	})
 
 	t.Run("test_include_attribute_with_invalid_expression", func(t *testing.T) {
-		t.Skip("TODO: Ruby :lax/:strict permissively accept `key: foo=>bar`; go-liquid currently rejects")
 		if _, err := Parse(`{% include "snippet", key: foo=>bar %}`); err != nil {
 			t.Errorf("lax/strict should accept malformed include kwarg; got %v", err)
 		}
