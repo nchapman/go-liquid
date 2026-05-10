@@ -8,6 +8,21 @@ type context struct {
 	parent *context
 }
 
+// selfRef is the value bound to the `self` keyword. It implements Drop so
+// that `self[key]` and `self.key` both resolve via the surrounding context
+// (Ruby Liquid parity for top-scope dynamic lookup).
+type selfRef struct {
+	ctx *context
+}
+
+// LiquidLookup implements Drop on selfRef.
+func (s *selfRef) LiquidLookup(key string) (any, bool) {
+	if s == nil || s.ctx == nil {
+		return nil, false
+	}
+	return s.ctx.lookup(key)
+}
+
 func newContext(data map[string]any) *context {
 	vars := make(map[string]any)
 	maps.Copy(vars, data)

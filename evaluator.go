@@ -773,6 +773,11 @@ func (e *evaluator) evalForInt(expr Expression) (int, error) {
 func (e *evaluator) evalExpr(expr Expression) (any, error) {
 	switch x := expr.(type) {
 	case *IdentExpr:
+		if x.Name == "self" {
+			// Ruby parity: `self` binds to the current scope; `self[key]`
+			// and `self.key` resolve via the surrounding context.
+			return &selfRef{ctx: e.ctx}, nil
+		}
 		val := e.ctx.get(x.Name)
 		if val == nil && e.cfg.strictVariables {
 			if _, ok := e.ctx.lookup(x.Name); !ok {

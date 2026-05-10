@@ -41,7 +41,6 @@ func TestUpstream_Variable_ExpressionWithWhitespaceInSquareBrackets(t *testing.T
 }
 
 func TestUpstream_Variable_ExpressionWithWhitespaceInSquareBrackets_Self(t *testing.T) {
-	t.Skip("go-liquid does not implement Ruby's `self` keyword for top-scope lookup")
 	renderEq(t, "self", "{{ a[ self[ 'b' ] ] }}",
 		map[string]any{"b": "c", "a": map[string]any{"c": "result"}}, "result")
 }
@@ -138,13 +137,11 @@ func TestUpstream_Variable_NestedArray(t *testing.T) {
 }
 
 func TestUpstream_Variable_DynamicFindVar(t *testing.T) {
-	t.Skip("go-liquid does not implement Ruby's `self` keyword for top-scope lookup")
 	renderEq(t, "dyn", "{{ self[key] }}",
 		map[string]any{"key": "foo", "foo": "bar"}, "bar")
 }
 
 func TestUpstream_Variable_RawValueVariable(t *testing.T) {
-	t.Skip("go-liquid does not implement Ruby's `self` keyword for top-scope lookup")
 	renderEq(t, "raw", "{{ self[key] }}",
 		map[string]any{"key": "foo", "foo": "bar"}, "bar")
 }

@@ -147,7 +147,6 @@ func TestUpstream_Context_AccessVariableWithHashNotation(t *testing.T) {
 }
 
 func TestUpstream_Context_AccessVariableWithHashNotation_Self(t *testing.T) {
-	t.Skip("go-liquid does not implement Ruby's `self` keyword for top-scope lookup")
 	renderEq(t, "self", `{{ self[bar] }}`,
 		map[string]any{"foo": "baz", "bar": "foo"}, "baz")
 }
