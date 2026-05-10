@@ -962,6 +962,21 @@ func getIndexOK(obj any, idx any) (any, bool) {
 		return getPropertyOK(obj, s)
 	}
 
+	// Reject fractional floats outright. Ruby's Utils.to_liquid_value
+	// keeps floats as floats, so {{ h[1.9] }} cannot match the string
+	// key "1" in a hash; truncating silently would invent a match that
+	// upstream does not produce.
+	switch f := idx.(type) {
+	case float32:
+		if float32(int32(f)) != f {
+			return nil, false
+		}
+	case float64:
+		if float64(int64(f)) != f {
+			return nil, false
+		}
+	}
+
 	i := int(toInt(toNumber(idx)))
 
 	switch v := obj.(type) {
@@ -984,6 +999,11 @@ func getIndexOK(obj any, idx any) (any, bool) {
 	case map[string]any:
 		// Ruby coerces the key for hash lookup so `obj[1]` finds entry "1".
 		// Real-world hit: JSON data with stringified-integer keys.
+		// Negative integers can't possibly match a stringified-int key,
+		// so skip the strconv.Itoa allocation on the guaranteed-miss path.
+		if i < 0 {
+			return nil, false
+		}
 		return getPropertyOK(obj, strconv.Itoa(i))
 	default:
 		rv := reflect.ValueOf(obj)
@@ -996,6 +1016,9 @@ func getIndexOK(obj any, idx any) (any, bool) {
 			}
 		}
 		if rv.Kind() == reflect.Map {
+			if i < 0 {
+				return nil, false
+			}
 			return getPropertyOK(obj, strconv.Itoa(i))
 		}
 	}

@@ -73,6 +73,12 @@ func TestShopifyCompat(t *testing.T) {
 		// Ruby coerces hash keys for integer subscript lookup, so
 		// `obj[1]` finds the entry stored under the string key "1".
 		{"hash int-key coercion", `{{ h[1] }}`, "v", map[string]any{"h": map[string]any{"1": "v"}}},
+		// Fractional float keys must NOT coerce — Ruby keeps floats as
+		// floats and they cannot match a string hash key. We do not want
+		// truncation to invent a match.
+		{"hash fractional float key no match", `[{{ h[1.9] }}]`, "[]", map[string]any{"h": map[string]any{"1": "v"}}},
+		// Negative integer keys never match stringified-int hash keys.
+		{"hash negative int key no match", `[{{ h[-1] }}]`, "[]", map[string]any{"h": map[string]any{"1": "v"}}},
 
 		// Ruby's `truncate` and `escape` pass nil through unchanged
 		// rather than coercing to "".
@@ -83,6 +89,9 @@ func TestShopifyCompat(t *testing.T) {
 		// (Ruby's lexer takes content verbatim). A template author who
 		// wants a real newline must put one in the source.
 		{"string literal keeps backslash escapes", `{{ "a\nb" }}`, `a\nb`, nil},
+		// Double backslash also stays literal — previously the lexer
+		// collapsed `\\` to a single backslash; Ruby preserves both.
+		{"string literal double backslash", `{{ "back\\slash" }}`, `back\\slash`, nil},
 
 		// truncatewords clamps to 1 word minimum (Ruby clamps `words <= 0`).
 		{"truncatewords clamps zero", `{{ s | truncatewords: 0 }}`, "one...", map[string]any{"s": "one two three"}},
