@@ -1,3 +1,5 @@
+//go:build ruby_internals
+
 package liquid
 
 import "testing"
