@@ -85,6 +85,9 @@ liquid.RegisterFilter("shout", func(input any, _ ...any) any {
 {% endfor %}
 
 {% for i in (1..5) %}{{ i }}{% endfor %}
+
+{% tablerow item in items cols: 3 %}{{ item }}{% endtablerow %}
+{% ifchanged %}{{ product.category }}{% endifchanged %}
 ```
 
 **Variables**
@@ -97,24 +100,42 @@ liquid.RegisterFilter("shout", func(input any, _ ...any) any {
 {% cycle "rows": "odd", "even" %}
 ```
 
+**Partials**
+
+```liquid
+{% include "header" %}
+{% render "card" with product %}
+{% render "card" for products as product %}
+```
+
+A `Loader` resolves partial names to source. The standard library ships
+`liquid.NewFileSystemLoader(dir)`; implement `liquid.Loader` for other sources.
+
+**Other tags** — `{% comment %}…{% endcomment %}`, `{% raw %}…{% endraw %}`,
+`{% liquid %}` (multi-line tag block), `{% echo expr %}`, `{% doc %}…{% enddoc %}`,
+`{% # inline comment %}`.
+
 **Whitespace control** — `{{- -}}` and `{%- -%}` strip surrounding whitespace.
 
-**Built-in filters** — `upcase`, `downcase`, `capitalize`, `strip`, `lstrip`, `rstrip`, `escape`, `newline_to_br`, `split`, `append`, `prepend`, `replace`, `replace_first`, `remove`, `remove_first`, `truncate`, `truncatewords`, `slice`, `first`, `last`, `size`, `join`, `reverse`, `sort`, `sort_natural`, `map`, `where`, `find`, `uniq`, `compact`, `concat`, `flatten`, `sum`, `default`, `plus`, `minus`, `times`, `divided_by`, `modulo`, `abs`, `round`, `ceil`, `floor`, `at_least`, `at_most`, `date`.
+**Built-in filters** — `upcase`, `downcase`, `capitalize`, `strip`, `lstrip`, `rstrip`, `escape` (alias `h`), `newline_to_br`, `split`, `append`, `prepend`, `replace`, `replace_first`, `remove`, `remove_first`, `truncate`, `truncatewords`, `slice`, `first`, `last`, `size`, `join`, `reverse`, `sort`, `sort_natural`, `map`, `where`, `find`, `uniq`, `compact`, `concat`, `flatten`, `sum`, `default`, `plus`, `minus`, `times`, `divided_by`, `modulo`, `abs`, `round`, `ceil`, `floor`, `at_least`, `at_most`, `date`.
 
 ## Performance
 
-Microbenchmarks on an Apple M4 Max (`go test -bench=.`):
+Microbenchmarks on an Apple M4 Max (`go test -bench=. -benchmem`):
 
 ```
-BenchmarkParse-16           1460 ns/op    1520 B/op    33 allocs/op
-BenchmarkRenderParsed-16   20318 ns/op   47136 B/op   517 allocs/op
+BenchmarkParse-16           1438 ns/op     1560 B/op    33 allocs/op
+BenchmarkRenderParsed-16   26734 ns/op    75760 B/op   626 allocs/op
+BenchmarkRenderTo-16       25321 ns/op    70352 B/op   615 allocs/op
 ```
 
 Render benchmark uses a 100-element loop with conditionals, filters, and property access.
 
 ## Status
 
-Tests cover the standard Liquid surface used by Jekyll/Hugo-style templates. Some advanced Shopify-specific features (`{% include %}`/`{% render %}`, drops, custom tag plugins) are not implemented yet.
+Tests cover the standard Liquid surface used by Jekyll/Hugo-style templates,
+including `{% include %}` and `{% render %}` partials via a pluggable `Loader`.
+Drops and custom tag plugins are not implemented yet.
 
 ## License
 
