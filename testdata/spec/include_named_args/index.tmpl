@@ -1,0 +1,4 @@
+{# data: {"items": [{"n":"a"},{"n":"b"},{"n":"c"}], "title": "List"} #}
+{% include "row", label: "X", count: 3 %}
+{% assign sz = items | size -%}
+{% include "row" with title, label: "Y", count: sz %}

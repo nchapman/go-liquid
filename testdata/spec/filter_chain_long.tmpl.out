@@ -1,0 +1,8 @@
+=== 6-stage string chain (associativity left-to-right) ===
+[hello liquid!]
+=== 5-stage array chain ===
+[9-6-5-4-3-2-1]
+=== chain with default mid-chain ===
+[FB?]
+=== filter after capture ===
+cap=[31415926535] reversed=[53562951413]

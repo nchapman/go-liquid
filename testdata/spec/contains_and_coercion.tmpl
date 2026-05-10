@@ -1,0 +1,22 @@
+{# data: {"items": ["apple","banana","cherry"], "word": "wonderland", "n": null, "empty": []} #}
+=== contains on string ===
+{% if word contains "land" %}land-yes{% else %}land-no{% endif %}
+{% if word contains "Land" %}case-yes{% else %}case-no{% endif %}
+=== contains on array ===
+{% if items contains "banana" %}arr-yes{% else %}arr-no{% endif %}
+{% if items contains "grape" %}arr-yes{% else %}arr-no{% endif %}
+=== contains on nil/empty ===
+{% if n contains "x" %}nil-yes{% else %}nil-no{% endif %}
+{% if empty contains "x" %}emp-yes{% else %}emp-no{% endif %}
+=== string-numeric comparison ===
+{% if "5" == 5 %}str-eq-num{% else %}str-neq-num{% endif %}
+{% if "10" > "9" %}lex-gt{% else %}lex-le{% endif %}
+=== blank/empty/nil ===
+{% if empty == empty %}empty-eq-empty{% endif %}
+{% if n == nil %}nil-eq-nil{% endif %}
+{% if "" == blank %}emptystr-blank{% endif %}
+{% if "   " == blank %}wsstr-blank{% endif %}
+{% if empty == empty %}empty-array-empty{% endif %}
+=== short circuit ===
+{% if true or undefined.boom %}or-short{% endif %}
+{% if false and undefined.boom %}wont{% else %}and-short{% endif %}

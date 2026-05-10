@@ -1,0 +1,28 @@
+{# data: {
+  "products": [
+    {"category": "fruit", "name": "apple"},
+    {"category": "fruit", "name": "banana"},
+    {"category": "fruit", "name": "cherry"},
+    {"category": "veg",   "name": "carrot"},
+    {"category": "veg",   "name": "celery"},
+    {"category": "meat",  "name": "beef"}
+  ]
+} #}
+=== ifchanged in for ===
+{% for p in products -%}
+{% ifchanged %}-- {{ p.category }} --
+{% endifchanged -%}
+{{ p.name }}
+{% endfor -%}
+
+=== consecutive duplicates suppressed ===
+{% assign seq = "a,a,b,b,b,c,a,a" | split: "," -%}
+{% for v in seq -%}
+{% ifchanged %}{{ v }}{% endifchanged %}
+{%- endfor %}
+
+=== shared register across blocks (Shopify parity) ===
+{% assign seq2 = "x,y,y,x" | split: "," -%}
+{% for v in seq2 -%}
+[{% ifchanged %}{{ v }}{% endifchanged %}|{% ifchanged %}{{ v }}{% endifchanged %}]
+{% endfor -%}

@@ -1,0 +1,12 @@
+=== negative indices ===
+last=c second_last=b first_neg=a
+=== out of range positive ===
+oob_high=[] empty_first=[] empty_neg=[]
+=== out of range negative ===
+deep_neg=[]
+=== nested ===
+nested_first=2 nested_last=5
+=== first/last on edges ===
+first_of_empty=[] last_of_empty=[] size_of_empty=0
+=== chained nil access ===
+chain=[]

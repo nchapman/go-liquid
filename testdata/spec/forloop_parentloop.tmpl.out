@@ -1,0 +1,15 @@
+=== three-level nested with parentloop chain ===
+row1: outer=1/2 parent=map[]
+- a mid=1/2 parent.idx=1 parent.name=r-matrix
+* 10 inner=1/2 pidx=1 ppidx=1 ppname=r-matrix
+* 20 inner=2/2 pidx=1 ppidx=1 ppname=r-matrix
+- b mid=2/2 parent.idx=1 parent.name=r-matrix
+* 30 inner=1/1 pidx=2 ppidx=1 ppname=r-matrix
+row2: outer=2/2 parent=map[]
+- c mid=1/1 parent.idx=2 parent.name=r-matrix
+* 40 inner=1/3 pidx=1 ppidx=2 ppname=r-matrix
+* 50 inner=2/3 pidx=1 ppidx=2 ppname=r-matrix
+* 60 inner=3/3 pidx=1 ppidx=2 ppname=r-matrix
+=== include shares parent forloop ===
+top first=true last=false parent=map[]
+top first=false last=true parent=map[]

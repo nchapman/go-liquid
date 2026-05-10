@@ -1,0 +1,10 @@
+{# data: {"none": null, "yes": true, "no": false, "empty_str": "", "empty_arr": [], "zero": 0, "real": "hi"} #}
+=== positional default ===
+none=[{{ none | default: "FB" }}] yes=[{{ yes | default: "FB" }}] no=[{{ no | default: "FB" }}] real=[{{ real | default: "FB" }}]
+empty_str=[{{ empty_str | default: "FB" }}] empty_arr=[{{ empty_arr | default: "FB" | join: "," }}] zero=[{{ zero | default: "FB" }}]
+=== allow_false: true ===
+none=[{{ none | default: "FB", allow_false: true }}] no=[{{ no | default: "FB", allow_false: true }}] yes=[{{ yes | default: "FB", allow_false: true }}]
+=== allow_false: false (explicit) ===
+no=[{{ no | default: "FB", allow_false: false }}]
+=== chained: default then filter ===
+[{{ none | default: "fallback" | upcase }}]

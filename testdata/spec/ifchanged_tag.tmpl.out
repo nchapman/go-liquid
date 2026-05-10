@@ -1,0 +1,18 @@
+=== ifchanged in for ===
+-- fruit --
+apple
+banana
+cherry
+-- veg --
+carrot
+celery
+-- meat --
+beef
+=== consecutive duplicates suppressed ===
+abca
+
+=== shared register across blocks (Shopify parity) ===
+[x|]
+[y|]
+[|]
+[x|]

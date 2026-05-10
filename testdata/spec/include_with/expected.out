@@ -1,0 +1,7 @@
+panel[name=Shoe|item=?|outer=OUTER]
+
+panel[name=Shoe|item=Shoe|outer=OUTER]
+
+leak-set
+
+leaked=from-include outer=OUTER

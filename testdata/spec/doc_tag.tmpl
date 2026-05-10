@@ -1,0 +1,11 @@
+{# data: {"name": "world"} #}
+before
+{%- doc -%}
+This is documentation. {% if x %}{{ y | filter }}{% endif %}
+The body is captured raw and discarded — even malformed-looking
+{% tag %} text is preserved here without parsing.
+{%- enddoc -%}
+after
+hello {{ name }}
+{%- doc %}second doc block{% enddoc -%}
+end

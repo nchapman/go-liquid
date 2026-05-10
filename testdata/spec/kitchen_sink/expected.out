@@ -1,0 +1,44 @@
+=== HEADER (capture + filter chain + whitespace trim) ===[GOLIQUID_DEMO] tags=GO/LIQUID/TEMPLATE
+
+=== USER GREETING (render isolated, named args, default kwarg with allow_false) ===*** Ada, you are premium (en) ***
+score=[0] missing=[n/a]
+
+=== CATEGORIES (for + if + tablerow + cycle + increment + ifchanged + parentloop) ===
+--- Fruit ---
+<tr class="row1">
+<td class="col1">[odd] apple $1.5 (r1c1 of cat#1) 0</td><td class="col2"></td></tr>
+<tr class="row2"><td class="col1"></td><td class="col2">[even] date $3 (r2c2 of cat#1) 1</td></tr>
+
+--- Veg ---
+<tr class="row1">
+<td class="col1">[odd] carrot $0.3 (r1c1 of cat#2) 2</td><td class="col2">[even] kale $1 (r1c2 of cat#2) 3</td></tr>
+
+--- Empty ---
+(no items)
+total counter=
+
+=== RENDER FOR with filtered args, isolation check ===
+- card #1/4 BANANA $0.5 (last=false) probe-here=MUTATED-INSIDE-RENDER
+
+- card #2/4 APPLE $1.5 (last=false) probe-here=MUTATED-INSIDE-RENDER
+
+- card #3/4 CHERRY $2.5 (last=false) probe-here=MUTATED-INSIDE-RENDER
+
+- card #4/4 DATE $3 (last=true) probe-here=MUTATED-INSIDE-RENDER
+
+
+isolation_probe=untouched-by-render (render cannot mutate caller scope)
+
+=== LIQUID BLOCK + CASE + INCLUDE (include shares scope, liquid groups statements) ===
+FOOTER for ada — Hello, Ada!
+final salutation=Hello (leaked from liquid+include)
+
+=== ESCAPING + URL + BASE64 + JSON-ish chain ===
+escape=[&lt;b&gt;bold&lt;/b&gt; &amp; &#39;quote&#39;]
+url=[hello+world+%26+friends]
+b64=[Z28=] back=[go]
+sort=[4,3,2,1]
+
+=== UNLESS + ELSE + BREAK + FOR ELSE ===
+1<two>3
+empty-collection

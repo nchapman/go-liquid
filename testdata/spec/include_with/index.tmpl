@@ -1,0 +1,5 @@
+{# data: {"product": {"name": "Shoe", "price": 49}, "outer": "OUTER"} #}
+{% include "panel" with product %}
+{% include "panel" with product as item %}
+{% include "leak" %}
+leaked={{ leaked }} outer={{ outer }}

@@ -1,0 +1,4 @@
+{# data: {"items": ["a","b","c","d","e"]} #}
+{% tablerow x in items cols: 2 -%}
+{{ x }}:i={{ tablerowloop.index }},i0={{ tablerowloop.index0 }},ri={{ tablerowloop.rindex }},ri0={{ tablerowloop.rindex0 }},len={{ tablerowloop.length }},col={{ tablerowloop.col }},col0={{ tablerowloop.col0 }},row={{ tablerowloop.row }},first={{ tablerowloop.first }},last={{ tablerowloop.last }},cf={{ tablerowloop.col_first }},cl={{ tablerowloop.col_last }}
+{%- endtablerow %}

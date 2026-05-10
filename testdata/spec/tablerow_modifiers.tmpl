@@ -1,0 +1,15 @@
+{# data: {"items": [1,2,3,4,5,6,7,8,9,10]} #}
+=== cols only ===
+{% tablerow n in items cols: 3 %}{{ n }}{% endtablerow %}
+=== limit ===
+{% tablerow n in items cols: 2, limit: 5 %}{{ n }}{% endtablerow %}
+=== offset ===
+{% tablerow n in items cols: 2, offset: 7 %}{{ n }}{% endtablerow %}
+=== limit + offset ===
+{% tablerow n in items cols: 2, offset: 3, limit: 4 %}{{ n }}{% endtablerow %}
+=== empty collection ===
+{% tablerow n in empty cols: 3 %}{{ n }}{% endtablerow %}
+=== break inside ===
+{% tablerow n in items cols: 2 %}{% if n == 4 %}{% break %}{% endif %}{{ n }}{% endtablerow %}
+=== continue inside ===
+{% tablerow n in items cols: 2 %}{% if n == 3 %}{% continue %}{% endif %}{{ n }}{% endtablerow %}

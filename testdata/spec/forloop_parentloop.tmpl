@@ -1,0 +1,23 @@
+{# data: {
+  "matrix": [
+    {"name": "row1", "items": [{"label": "a", "subs": [10, 20]},
+                               {"label": "b", "subs": [30]}]},
+    {"name": "row2", "items": [{"label": "c", "subs": [40, 50, 60]}]}
+  ]
+} #}
+=== three-level nested with parentloop chain ===
+{% for r in matrix -%}
+{{ r.name }}: outer={{ forloop.index }}/{{ forloop.length }} parent={{ forloop.parentloop }}
+{% for it in r.items -%}
+  - {{ it.label }} mid={{ forloop.index }}/{{ forloop.length }} parent.idx={{ forloop.parentloop.index }} parent.name={{ forloop.parentloop.name }}
+{% for s in it.subs -%}
+    * {{ s }} inner={{ forloop.index }}/{{ forloop.length }} pidx={{ forloop.parentloop.index }} ppidx={{ forloop.parentloop.parentloop.index }} ppname={{ forloop.parentloop.parentloop.name }}
+{% endfor -%}
+{% endfor -%}
+{% endfor -%}
+
+=== include shares parent forloop ===
+{% assign letters = "a,b" | split: "," -%}
+{% for n in letters -%}
+top first={{ forloop.first }} last={{ forloop.last }} parent={{ forloop.parentloop }}
+{% endfor -%}

@@ -1,0 +1,21 @@
+=== contains on string ===
+land-yes
+case-no
+=== contains on array ===
+arr-yes
+arr-no
+=== contains on nil/empty ===
+nil-no
+emp-no
+=== string-numeric comparison ===
+str-neq-num
+lex-le
+=== blank/empty/nil ===
+
+nil-eq-nil
+emptystr-blank
+wsstr-blank
+
+=== short circuit ===
+or-short
+and-short

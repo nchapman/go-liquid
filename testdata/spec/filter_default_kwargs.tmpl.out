@@ -1,0 +1,9 @@
+=== positional default ===
+none=[FB] yes=[true] no=[FB] real=[hi]
+empty_str=[FB] empty_arr=[F,B] zero=[0]
+=== allow_false: true ===
+none=[FB] no=[false] yes=[true]
+=== allow_false: false (explicit) ===
+no=[FB]
+=== chained: default then filter ===
+[FALLBACK]

@@ -1,0 +1,13 @@
+{# data: {"items": ["a","b","c"], "empty": [], "nested": [[1,2],[3,4,5]]} #}
+=== negative indices ===
+last={{ items[-1] }} second_last={{ items[-2] }} first_neg={{ items[-3] }}
+=== out of range positive ===
+oob_high=[{{ items[99] }}] empty_first=[{{ empty[0] }}] empty_neg=[{{ empty[-1] }}]
+=== out of range negative ===
+deep_neg=[{{ items[-99] }}]
+=== nested ===
+nested_first={{ nested[0][1] }} nested_last={{ nested[-1][-1] }}
+=== first/last on edges ===
+first_of_empty=[{{ empty.first }}] last_of_empty=[{{ empty.last }}] size_of_empty={{ empty.size }}
+=== chained nil access ===
+chain=[{{ items[10].whatever.deep }}]

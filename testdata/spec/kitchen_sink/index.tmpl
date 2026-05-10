@@ -1,0 +1,82 @@
+{# data: {
+  "site": {"title": "GoLiquid Demo", "tags": ["go","liquid","template"]},
+  "user": {"name": "ada", "lang": "en", "premium": true, "score": 0},
+  "categories": [
+    {"name": "Fruit",  "items": [
+      {"name": "apple",  "price": 1.5, "stock": 4, "skip": false},
+      {"name": "banana", "price": 0.5, "stock": 0, "skip": false},
+      {"name": "cherry", "price": 2.5, "stock": 7, "skip": true},
+      {"name": "date",   "price": 3.0, "stock": 2, "skip": false}
+    ]},
+    {"name": "Veg", "items": [
+      {"name": "carrot", "price": 0.3, "stock": 12, "skip": false},
+      {"name": "kale",   "price": 1.0, "stock": 3,  "skip": false}
+    ]},
+    {"name": "Empty", "items": []}
+  ],
+  "matrix": [[1,2,3,4],[5,6,7,8],[9,10,11,12]],
+  "raw_html": "<b>bold</b> & 'quote'",
+  "empty_arr": [],
+  "tags_json": null,
+  "missing": null
+} #}
+=== HEADER (capture + filter chain + whitespace trim) ===
+{%- capture header -%}
+  {%- assign t = site.title | upcase | replace: " ", "_" -%}
+  [{{ t }}] tags={{ site.tags | join: "/" | upcase }}
+{%- endcapture -%}
+{{ header }}
+
+=== USER GREETING (render isolated, named args, default kwarg with allow_false) ===
+{%- assign cap_name = user.name | capitalize -%}
+{% render "greet", who: cap_name, lang: user.lang, premium: user.premium %}
+score=[{{ user.score | default: "n/a", allow_false: true }}] missing=[{{ missing | default: "n/a" }}]
+
+=== CATEGORIES (for + if + tablerow + cycle + increment + ifchanged + parentloop) ===
+{% for cat in categories -%}
+{% ifchanged %}--- {{ cat.name }} ---{% endifchanged %}
+{% if cat.items.size > 0 -%}
+{% tablerow item in cat.items cols: 2 -%}
+{%- if item.skip %}<skip {{ item.name }}>{% continue %}{% endif -%}
+{%- if item.stock == 0 %}<oos {{ item.name }}>{% continue %}{% endif -%}
+[{% cycle "odd","even" %}] {{ item.name }} ${{ item.price }} (r{{ tablerowloop.row }}c{{ tablerowloop.col }} of cat#{{ forloop.index }}) {% increment counter %}
+{%- endtablerow %}
+{%- else -%}
+(no items)
+{%- endif %}
+{% endfor -%}
+total counter={{ counter }}
+
+=== RENDER FOR with filtered args, isolation check ===
+{% assign top3 = categories | map: "items" | first | sort: "price" -%}
+{% assign isolation_probe = "untouched-by-render" -%}
+{% render "card" for top3 as p, currency: "$", upper: true %}
+isolation_probe={{ isolation_probe }} (render cannot mutate caller scope)
+
+=== LIQUID BLOCK + CASE + INCLUDE (include shares scope, liquid groups statements) ===
+{% liquid
+  case user.lang
+  when "en"
+    assign salutation = "Hello"
+  when "fr"
+    assign salutation = "Bonjour"
+  else
+    assign salutation = "Hi"
+  endcase
+  include "footer", who: user.name
+-%}
+final salutation={{ salutation }} (leaked from liquid+include)
+
+=== ESCAPING + URL + BASE64 + JSON-ish chain ===
+escape=[{{ raw_html | escape }}]
+url=[{{ "hello world & friends" | url_encode }}]
+b64=[{{ "go" | base64_encode }}] back=[{{ "Z28=" | base64_decode }}]
+sort=[{{ matrix | first | reverse | join: "," }}]
+
+=== UNLESS + ELSE + BREAK + FOR ELSE ===
+{% for n in (1..6) -%}
+{% if n == 4 %}{% break %}{% endif %}
+{%- unless n == 2 %}{{ n }}{% else %}<two>{% endunless %}
+{%- endfor %}
+{% for x in matrix[2] -%}{% if x > 100 %}{{ x }}{% else %}{% endif %}{% endfor -%}
+{% for x in empty_arr %}{{ x }}{% else %}empty-collection{% endfor %}

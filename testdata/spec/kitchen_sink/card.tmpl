@@ -1,0 +1,8 @@
+{%- if upper -%}
+{%- assign nm = p.name | upcase -%}
+{%- else -%}
+{%- assign nm = p.name -%}
+{%- endif -%}
+{%- assign isolation_probe = "MUTATED-INSIDE-RENDER" -%}
+- card #{{ forloop.index }}/{{ forloop.length }} {{ nm }} {{ currency }}{{ p.price }} (last={{ forloop.last }}) probe-here={{ isolation_probe }}
+
