@@ -1,25 +1,27 @@
 package liquid
 
-import "testing"
+import (
+	"sort"
+	"testing"
+)
 
 // Upstream parity: integration/filter_kwarg_test.rb
 
 func TestUpstream_FilterKwarg_CanParseDataKwargs(t *testing.T) {
-	t.Skip("go-liquid lexer does not allow '-' in identifiers; kebab-case kwarg keys (e.g. data-src:) require lexer support")
-
 	env := NewEnvironment()
 	env.RegisterKwargFilter("html_tag", func(input any, args []any, kwargs map[string]any) any {
-		// emit in stable insertion order — but go map iteration is unstable,
-		// so this test depends on ordered kwargs. The body is retained for
-		// when both kebab-case kwarg keys and ordered kwargs are supported.
+		// Sort keys so output is stable (Go map iteration is unordered).
+		keys := make([]string, 0, len(kwargs))
+		for k := range kwargs {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
 		out := ""
-		first := true
-		for k, v := range kwargs {
-			if !first {
+		for i, k := range keys {
+			if i > 0 {
 				out += " "
 			}
-			first = false
-			out += k + "='" + toString(v) + "'"
+			out += k + "='" + toString(kwargs[k]) + "'"
 		}
 		return out
 	})

@@ -55,13 +55,14 @@ func TestUpstream_VariableUnit_Float(t *testing.T) {
 }
 
 func TestUpstream_VariableUnit_Dashes(t *testing.T) {
-	t.Skip("go-liquid lexer does not allow '-' in identifiers (kebab-case)")
 	renderEq(t, "dash", "{{ foo-bar }}", map[string]any{"foo-bar": "v"}, "v")
 }
 
 func TestUpstream_VariableUnit_StringWithSpecialChars(t *testing.T) {
-	t.Skip("go-liquid lexer does not process backslash-escaped quotes inside string literals; Ruby supports \\\" escapes")
-	renderEq(t, "specials", `{{ "hello! $!@.;\"ddasd \"" }}`, nil, `hello! $!@.;"ddasd "`)
+	// Ruby Liquid doesn't process escape sequences in strings; you use the
+	// opposite quote type when you need the other inside. Original Ruby:
+	//   ' hello! $!@.;"ddasd" '  (single-quoted, contains literal double quotes)
+	renderEq(t, "specials", `{{ 'hello! $!@.;"ddasd" ' }}`, nil, `hello! $!@.;"ddasd" `)
 }
 
 func TestUpstream_VariableUnit_StringDot(t *testing.T) {
