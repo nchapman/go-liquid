@@ -5,7 +5,7 @@ A pure-Go implementation of the [Liquid](https://shopify.github.io/liquid/) temp
 - **Liquid-compatible** — output (`{{ }}`), tags (`{% %}`), filters, control flow, loops, whitespace control.
 - **Fast** — single-pass lexer, no regexes, no reflection on the hot path for `map[string]any` data.
 - **Idiomatic Go** — `Parse` once, `Render` many times. Streaming via `io.Writer`. Structs and tagged fields work out of the box.
-- **Zero dependencies** — only the Go standard library.
+- **No runtime dependencies** — only the Go standard library is linked into your binary. (`gopkg.in/yaml.v3` is a test-only dep used by the Shopify benchmark.)
 
 ## Install
 
@@ -130,6 +130,35 @@ BenchmarkRenderTo-16       25321 ns/op    70352 B/op   615 allocs/op
 ```
 
 Render benchmark uses a 100-element loop with conditionals, filters, and property access.
+
+### Shopify "vision" theme benchmark
+
+`go test -bench=Shopify` runs a port of Shopify/liquid's
+[`performance/benchmark.rb`](https://github.com/Shopify/liquid/blob/main/performance/benchmark.rb)
+— 18 page templates across 4 real Shopify themes, wrapped in their
+`theme.liquid` layouts, against the same `vision.database.yml` fixture. The 12
+templates that use `{% paginate %}` / `{% form %}` are skipped (custom Block
+tags, not yet supported).
+
+Wall time on the same Apple M4 Max:
+
+| Phase  | go-liquid (per template) | Shopify/liquid (Ruby 3.4 + YJIT) | Ratio |
+|--------|--------------------------|----------------------------------|-------|
+| Parse  | ~11 µs                   | ~100 µs                          | ~9×   |
+| Render | ~15 µs                   | ~44 µs                           | ~3×   |
+
+Reproduce the Ruby side:
+
+```sh
+cd path/to/Shopify/liquid
+bundle install
+PHASE=render bundle exec ruby performance/benchmark.rb
+PHASE=parse  bundle exec ruby performance/benchmark.rb
+```
+
+Caveat: filter stubs (`money`, `asset_url`, `link_to_*`, etc.) are minimal
+ports of `performance/shopify/*.rb` and don't reproduce every edge case —
+fine for throughput comparison, not for output diffing.
 
 ## Status
 
