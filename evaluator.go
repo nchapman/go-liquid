@@ -1138,6 +1138,13 @@ func getIndexOK(obj, idx any, ctx RenderContext) (any, bool) {
 		return nil, false
 	}
 	if s, ok := idx.(string); ok {
+		// Ruby semantics: bracket notation with a string key is hash lookup
+		// only — `arr["first"]` does NOT resolve `.first` as a property.
+		// Property fallback is reserved for dot syntax. Reject string indices
+		// on array-like objects up front.
+		if isArrayLike(obj) {
+			return nil, false
+		}
 		return getPropertyOK(obj, s, ctx)
 	}
 	if isFractionalFloat(idx) {

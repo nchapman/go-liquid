@@ -170,7 +170,6 @@ func TestUpstream_Context_HashNotationOnlyForHashAccess(t *testing.T) {
 }
 
 func TestUpstream_Context_HashNotationOnlyForHashAccess_BracketOnArray(t *testing.T) {
-	t.Skip("go-liquid: array[\"first\"] resolves to first element; Ruby returns nil (hash notation invalid on arrays)")
 	d := map[string]any{"array": []any{1, 2, 3, 4, 5}}
 	renderEq(t, "bracket-on-arr", `{% if array["first"] == nil %}pass{% endif %}`, d, "pass")
 }
