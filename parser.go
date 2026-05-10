@@ -1333,12 +1333,28 @@ func (p *parser) parsePartialTag(isolated bool) (Node, error) {
 	column := p.curToken.column
 	p.nextToken() // consume render/include
 
-	if p.curToken.typ != tokenString {
+	// {% render %} requires a string-literal partial name (Ruby parity:
+	// dynamically-chosen render targets are forbidden). {% include %}
+	// accepts either a literal or a variable expression resolved at
+	// render time.
+	var (
+		name        string
+		templateVar Expression
+	)
+	if p.curToken.typ == tokenString {
+		name = p.curToken.literal
+		p.nextToken()
+	} else if !isolated {
+		expr, err := p.parsePrimary()
+		if err != nil {
+			return nil, newParseError(p.curToken.line, p.curToken.column,
+				"expected partial name as string literal or variable, got %q", p.curToken.literal)
+		}
+		templateVar = expr
+	} else {
 		return nil, newParseError(p.curToken.line, p.curToken.column,
 			"expected partial name as string literal, got %q", p.curToken.literal)
 	}
-	name := p.curToken.literal
-	p.nextToken()
 
 	var (
 		withExpr, forExpr   Expression
@@ -1424,14 +1440,15 @@ func (p *parser) parsePartialTag(isolated bool) (Node, error) {
 		}, nil
 	}
 	return &IncludeTag{
-		Template:  name,
-		With:      withExpr,
-		WithAlias: withAlias,
-		For:       forExpr,
-		ForAlias:  forAlias,
-		Args:      args,
-		Line:      line,
-		Column:    column,
+		Template:     name,
+		TemplateExpr: templateVar,
+		With:         withExpr,
+		WithAlias:    withAlias,
+		For:          forExpr,
+		ForAlias:     forAlias,
+		Args:         args,
+		Line:         line,
+		Column:       column,
 	}, nil
 }
 

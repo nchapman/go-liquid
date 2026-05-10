@@ -426,14 +426,15 @@ func (t *RenderTag) Pos() (line, column int) { return t.Line, t.Column }
 // shares the parent scope: assignments in the partial are visible to the
 // caller.
 type IncludeTag struct {
-	Template  string
-	With      Expression
-	WithAlias string
-	For       Expression
-	ForAlias  string
-	Args      []NamedArg
-	Line      int
-	Column    int
+	Template     string     // literal partial name (when known at parse time)
+	TemplateExpr Expression // dynamic name; evaluated at render. Mutually exclusive with Template.
+	With         Expression
+	WithAlias    string
+	For          Expression
+	ForAlias     string
+	Args         []NamedArg
+	Line         int
+	Column       int
 }
 
 func (t *IncludeTag) node() {}

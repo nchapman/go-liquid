@@ -356,12 +356,26 @@ func (e *evaluator) evalIncludeTag(w io.Writer, tag *IncludeTag) error {
 	if e.tagDisabled("include") {
 		return fmt.Errorf("%w: include is disabled inside {%% render %%}", ErrDisabledTag)
 	}
-	partial, err := e.loadPartial(tag.Template)
+	// Resolve dynamic template name (variable form). Errors here mirror
+	// Ruby's "Illegal template name" — nil/missing variable, or non-string.
+	tplName := tag.Template
+	if tag.TemplateExpr != nil {
+		val, err := e.evalExpr(tag.TemplateExpr)
+		if err != nil {
+			return err
+		}
+		s, ok := val.(string)
+		if !ok || s == "" {
+			return fmt.Errorf("Argument error in tag 'include' - Illegal template name")
+		}
+		tplName = s
+	}
+	partial, err := e.loadPartial(tplName)
 	if err != nil {
 		return err
 	}
 	if e.partialDepth >= maxPartialDepth {
-		return fmt.Errorf("partial depth exceeded %d (possible cycle in %q)", maxPartialDepth, tag.Template)
+		return fmt.Errorf("partial depth exceeded %d (possible cycle in %q)", maxPartialDepth, tplName)
 	}
 	e.partialDepth++
 	defer func() { e.partialDepth-- }()
@@ -372,7 +386,7 @@ func (e *evaluator) evalIncludeTag(w io.Writer, tag *IncludeTag) error {
 			return err
 		}
 		if val != nil {
-			e.ctx.set(partialAlias(tag.WithAlias, tag.Template), val)
+			e.ctx.set(partialAlias(tag.WithAlias, tplName), val)
 		}
 	}
 	args, err := e.evalNamedArgs(tag.Args)
@@ -389,7 +403,13 @@ func (e *evaluator) evalIncludeTag(w io.Writer, tag *IncludeTag) error {
 			return err
 		}
 		items := toSlice(coll)
-		alias := partialAlias(tag.ForAlias, tag.Template)
+		// Ruby's slice_collection wraps a non-array, non-nil value as a
+		// single-element iteration. Mirror that here so {% include p for x %}
+		// with a non-array x renders the partial once.
+		if items == nil && coll != nil {
+			items = []any{coll}
+		}
+		alias := partialAlias(tag.ForAlias, tplName)
 		length := len(items)
 		// include shares parent scope, so the enclosing forloop (if any)
 		// becomes parentloop. The forloop slot is re-set each iteration
