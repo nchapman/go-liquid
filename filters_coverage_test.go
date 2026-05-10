@@ -70,11 +70,12 @@ func TestFiltersComprehensive(t *testing.T) {
 		{"slice negative", `{{ s | slice: -2, 2 }}`, map[string]any{"s": "hello"}, "lo"},
 		{"slice out of range", `{{ s | slice: 99, 5 }}`, map[string]any{"s": "hi"}, ""},
 		{"slice unicode", `{{ s | slice: 1, 2 }}`, map[string]any{"s": "héllo"}, "él"},
-		// Documents that filterTruncate counts BYTES (so the keep+suffix budget
-		// is byte-based). If multi-byte UTF-8 falls inside the keep window the
-		// output may slice mid-rune; this test pins the current behavior so a
-		// future rune-based rewrite is a deliberate, not silent, change.
-		{"truncate truncates by bytes", `{{ s | truncate: 4 }}`, map[string]any{"s": "café au lait"}, "c..."},
+		// truncate counts runes, not bytes — multi-byte UTF-8 inputs slice
+		// cleanly to the requested character count.
+		{"truncate by runes", `{{ s | truncate: 5 }}`, map[string]any{"s": "café au lait"}, "ca..."},
+		{"truncate by runes - emoji", `{{ s | truncate: 4 }}`, map[string]any{"s": "hi👋👋👋"}, "h..."},
+		{"size of utf8 string", `{{ s | size }}`, map[string]any{"s": "héllo"}, "5"},
+		{"first of utf8 string", `{{ s | first }}`, map[string]any{"s": "héllo"}, "h"},
 
 		// URL
 		{"url_encode", `{{ s | url_encode }}`, map[string]any{"s": "a b&c"}, "a+b%26c"},

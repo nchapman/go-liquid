@@ -267,18 +267,18 @@ func filterTruncate(input any, args ...any) any {
 		ellipsis = toString(args[1])
 	}
 
-	if len(s) <= length {
+	// Shopify counts characters (Ruby String#length), not bytes, so multi-byte
+	// UTF-8 inputs slice cleanly. Same applies to the ellipsis budget.
+	runes := []rune(s)
+	ellRunes := []rune(ellipsis)
+	if len(runes) <= length {
 		return s
 	}
-	// Keep `length - len(ellipsis)` characters then append the ellipsis.
-	// Matches Shopify exactly, including the corner case where `length` is
-	// smaller than the ellipsis: the kept portion clamps to 0 and the full
-	// ellipsis is still appended (so output may exceed `length`).
-	keep := length - len(ellipsis)
+	keep := length - len(ellRunes)
 	if keep < 0 {
 		keep = 0
 	}
-	return s[:keep] + ellipsis
+	return string(runes[:keep]) + ellipsis
 }
 
 func filterTruncateWords(input any, args ...any) any {
@@ -360,6 +360,17 @@ func filterNewlineToBr(input any, args ...any) any {
 // Array filters
 
 func filterFirst(input any, args ...any) any {
+	// Ruby Liquid returns "" (not nil) for first/last on an empty string,
+	// matching String#[]. Treat the string case explicitly so empties round-
+	// trip predictably and so the result is a proper character (rune), not
+	// a byte sliced mid-codepoint.
+	if s, ok := input.(string); ok {
+		if s == "" {
+			return ""
+		}
+		runes := []rune(s)
+		return string(runes[0])
+	}
 	slice := toSlice(input)
 	if len(slice) == 0 {
 		return nil
@@ -368,6 +379,13 @@ func filterFirst(input any, args ...any) any {
 }
 
 func filterLast(input any, args ...any) any {
+	if s, ok := input.(string); ok {
+		if s == "" {
+			return ""
+		}
+		runes := []rune(s)
+		return string(runes[len(runes)-1])
+	}
 	slice := toSlice(input)
 	if len(slice) == 0 {
 		return nil
@@ -381,13 +399,17 @@ func filterSize(input any, args ...any) any {
 	}
 	switch v := input.(type) {
 	case string:
-		return len(v)
+		// Ruby's String#size counts characters, not bytes; match that for
+		// any UTF-8 input. utf8.RuneCountInString is allocation-free.
+		return utf8.RuneCountInString(v)
 	case []any:
 		return len(v)
 	default:
 		rv := reflect.ValueOf(input)
 		switch rv.Kind() {
-		case reflect.Array, reflect.Slice, reflect.Map, reflect.String:
+		case reflect.String:
+			return utf8.RuneCountInString(rv.String())
+		case reflect.Array, reflect.Slice, reflect.Map:
 			return rv.Len()
 		}
 	}
@@ -1034,10 +1056,13 @@ func toSlice(v any) []any {
 		}
 		return result
 	case string:
-		// Split string into characters
-		result := make([]any, len(val))
-		for i, c := range val {
-			result[i] = string(c)
+		// Split into characters (runes). The previous form preallocated
+		// len(val) — the BYTE count — and then range-iterated runes,
+		// leaving trailing nils on every multi-byte input.
+		runes := []rune(val)
+		result := make([]any, len(runes))
+		for i, r := range runes {
+			result[i] = string(r)
 		}
 		return result
 	default:

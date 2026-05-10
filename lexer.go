@@ -397,10 +397,32 @@ func (l *lexer) scanIdentifier() token {
 	col := l.column
 	startPos := l.pos
 
-	for isLetter(l.ch) || isDigit(l.ch) || l.ch == '_' || l.ch == '?' {
-		l.readChar()
+	// Ruby Liquid's IDENTIFIER regex allows hyphens after the first
+	// character: /[a-zA-Z_][\w-]*\??/. Templates like {{ my-var }} or
+	// {{ obj.product-name }} are valid Liquid. The hyphen is also the
+	// minus operator and the trim marker, so peek the next byte and only
+	// consume it as part of the identifier when an identifier character
+	// follows — `obj-prop` is one ident, `obj - prop` is three tokens.
+	for {
+		switch {
+		case isLetter(l.ch) || isDigit(l.ch) || l.ch == '_':
+			l.readChar()
+		case l.ch == '-' && l.pos > startPos:
+			next := l.peekChar()
+			if isLetter(next) || isDigit(next) || next == '_' {
+				l.readChar()
+			} else {
+				goto done
+			}
+		case l.ch == '?':
+			// Trailing `?` is allowed once and ends the identifier.
+			l.readChar()
+			goto done
+		default:
+			goto done
+		}
 	}
-
+done:
 	literal := l.input[startPos:l.pos]
 	typ := lookupIdent(literal)
 	return token{typ: typ, literal: literal, line: line, column: col}
