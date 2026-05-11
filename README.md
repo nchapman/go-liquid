@@ -221,9 +221,9 @@ Tests cover the standard Liquid surface used by Jekyll/Hugo-style templates, inc
 Microbenchmarks on an Apple M4 Max (`go test -bench=. -benchmem`):
 
 ```
-BenchmarkParse-16           1200 ns/op     1624 B/op    33 allocs/op
-BenchmarkRenderParsed-16   11810 ns/op     7880 B/op   128 allocs/op
-BenchmarkRenderTo-16       10872 ns/op     2480 B/op   117 allocs/op
+BenchmarkParse-16           1163 ns/op     1656 B/op    34 allocs/op
+BenchmarkRenderParsed-16   12934 ns/op     7936 B/op   127 allocs/op
+BenchmarkRenderTo-16       11404 ns/op     2536 B/op   116 allocs/op
 ```
 
 Render benchmark uses a 100-element loop with conditionals, filters, and property access.
@@ -248,10 +248,10 @@ Wall time per full pass over the 30-template set, on the same Apple M4 Max (`go 
 
 | Phase            | go-liquid | Shopify/liquid (Ruby 3.4 + YJIT) | Ratio |
 |------------------|-----------|----------------------------------|-------|
-| Tokenize         | 0.18 ms   | 0.26 ms                          | 1.4×  |
-| Parse            | 0.50 ms   | 5.96 ms                          | 11.9× |
-| Render           | 0.54 ms   | 1.32 ms                          | 2.4×  |
-| Parse + Render   | 1.15 ms   | 7.96 ms                          | 6.9×  |
+| Tokenize         | 0.19 ms   | 0.26 ms                          | 1.4×  |
+| Parse            | 0.51 ms   | 5.96 ms                          | 11.6× |
+| Render           | 0.57 ms   | 1.32 ms                          | 2.3×  |
+| Parse + Render   | 1.18 ms   | 7.96 ms                          | 6.7×  |
 
 Reproduce the Ruby side:
 
