@@ -693,7 +693,7 @@ func (p *parser) parseIfTag() (Node, error) {
 
 	// Parse then branch
 	tag.ThenBranch, err = p.parseNodes(func() bool {
-		return p.isTagKeyword("elsif") || p.isTagKeyword("else") || p.isTagKeyword("endif")
+		return p.isTagKeywordIn("elsif", "else", "endif")
 	})
 	if err != nil {
 		return nil, err
@@ -717,7 +717,7 @@ func (p *parser) parseIfTag() (Node, error) {
 
 		var elsifBody []Node
 		elsifBody, err = p.parseNodes(func() bool {
-			return p.isTagKeyword("elsif") || p.isTagKeyword("else") || p.isTagKeyword("endif")
+			return p.isTagKeywordIn("elsif", "else", "endif")
 		})
 		if err != nil {
 			return nil, err
@@ -783,7 +783,7 @@ func (p *parser) parseUnlessTag() (Node, error) {
 
 	// Parse body
 	tag.Body, err = p.parseNodes(func() bool {
-		return p.isTagKeyword("else") || p.isTagKeyword("endunless")
+		return p.isTagKeywordIn("else", "endunless")
 	})
 	if err != nil {
 		return nil, err
@@ -883,7 +883,7 @@ func (p *parser) parseCaseTag() (Node, error) {
 
 		var body []Node
 		body, err = p.parseNodes(func() bool {
-			return p.isTagKeyword("when") || p.isTagKeyword("else") || p.isTagKeyword("endcase")
+			return p.isTagKeywordIn("when", "else", "endcase")
 		})
 		if err != nil {
 			return nil, err
@@ -963,7 +963,7 @@ func (p *parser) parseForTag() (Node, error) {
 	}
 
 	tag.Body, err = p.parseNodes(func() bool {
-		return p.isTagKeyword("else") || p.isTagKeyword("endfor")
+		return p.isTagKeywordIn("else", "endfor")
 	})
 	if err != nil {
 		return nil, err
@@ -1911,16 +1911,18 @@ func (p *parser) matchDoubledLogicalOp() (matched bool, op string) {
 	switch {
 	case p.curToken.typ == tokenIllegal && p.curToken.literal == "&":
 		s := p.snapshot()
-		defer p.restore(s)
 		p.nextToken()
-		if p.curToken.typ == tokenIllegal && p.curToken.literal == "&" {
+		hit := p.curToken.typ == tokenIllegal && p.curToken.literal == "&"
+		p.restore(s)
+		if hit {
 			return true, "and"
 		}
 	case p.curToken.typ == tokenPipe:
 		s := p.snapshot()
-		defer p.restore(s)
 		p.nextToken()
-		if p.curToken.typ == tokenPipe {
+		hit := p.curToken.typ == tokenPipe
+		p.restore(s)
+		if hit {
 			return true, "or"
 		}
 	}
@@ -1930,11 +1932,16 @@ func (p *parser) matchDoubledLogicalOp() (matched bool, op string) {
 // peekTokenIs reports whether the token immediately following curToken
 // has the given type. State is saved and restored so callers see no side
 // effects.
+//
+// Explicit restore (rather than `defer p.restore`) — this is on the
+// hot path of every parseNodes loop iteration through if/for/case
+// bodies, and defer's frame setup measurably slows parsing.
 func (p *parser) peekTokenIs(typ TokenType) bool {
 	s := p.snapshot()
-	defer p.restore(s)
 	p.nextToken()
-	return p.curToken.typ == typ
+	matched := p.curToken.typ == typ
+	p.restore(s)
+	return matched
 }
 
 // isTagKeyword peeks past `{%` (or `{%-`) to see whether the next token
@@ -1946,9 +1953,35 @@ func (p *parser) isTagKeyword(word string) bool {
 		return false
 	}
 	s := p.snapshot()
-	defer p.restore(s)
 	p.nextToken()
-	return p.curToken.typ == tokenIdent && p.curToken.literal == word
+	matched := p.curToken.typ == tokenIdent && p.curToken.literal == word
+	p.restore(s)
+	return matched
+}
+
+// isTagKeywordIn is isTagKeyword's batched form: one snapshot/peek/
+// restore cycle answers whether the peek matches any of `words`. The
+// parseNodes endCondition for if/unless/case blocks asks about three
+// possible terminator keywords on every iteration, so collapsing them
+// into a single peek measurably reduces parse time on large templates.
+func (p *parser) isTagKeywordIn(words ...string) bool {
+	if p.curToken.typ != tokenTagOpen && p.curToken.typ != tokenTagTrim {
+		return false
+	}
+	s := p.snapshot()
+	p.nextToken()
+	matched := false
+	if p.curToken.typ == tokenIdent {
+		lit := p.curToken.literal
+		for _, w := range words {
+			if lit == w {
+				matched = true
+				break
+			}
+		}
+	}
+	p.restore(s)
+	return matched
 }
 
 // expectTagClose expects and consumes a tag close token (%} or -%}).
