@@ -482,11 +482,13 @@ func filterSort(input any, args ...any) any {
 		prop := toString(args[0])
 		// Ruby reads the property from every element up front (via map),
 		// so to_liquid fires once per element even on degenerate inputs
-		// where SortFunc would otherwise skip the comparator (len <= 1).
-		// getProperty does the liquify internally, so a single read per
-		// element is enough — no separate liquify call.
-		for _, it := range result {
-			_ = getProperty(it, prop)
+		// where SortFunc skips the comparator. For len >= 2 the comparator
+		// already reads every element via getProperty (which liquifies),
+		// so the extra pass is only needed for the degenerate case.
+		if len(result) < 2 {
+			for _, it := range result {
+				_ = getProperty(it, prop)
+			}
 		}
 		slices.SortFunc(result, func(a, b any) int {
 			aVal := getProperty(a, prop)

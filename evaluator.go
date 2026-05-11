@@ -1097,7 +1097,27 @@ func getPropertyOKRaw(obj any, prop string, ctx RenderContext) (any, bool) {
 		return nil, false
 	}
 
-	// Liquify the receiver too, so a non-Drop domain object that opts into
+	// Map fast path: the dominant case in Shopify-style templates is
+	// dotted descent through nested maps. Handle it before any liquify
+	// or interface checks so a chain like `product.title` doesn't pay
+	// per-step receiver-liquify overhead. A literal map[string]any
+	// can't implement ToLiquidConverter or Drop (both are user-declared
+	// interfaces and map[string]any is built-in), so skipping the
+	// receiver liquify here is always safe.
+	if m, ok := obj.(map[string]any); ok {
+		if v, present := m[prop]; present {
+			return v, true
+		}
+		switch prop {
+		case "size":
+			return len(m), true
+		case "empty?":
+			return len(m) == 0, true
+		}
+		return nil, false
+	}
+
+	// Liquify the receiver so a non-Drop domain object that opts into
 	// a Drop representation (via to_liquid) is descended via its Drop
 	// surface and not its Go-side fields/methods.
 	obj = liquify(obj)
@@ -1110,13 +1130,14 @@ func getPropertyOKRaw(obj any, prop string, ctx RenderContext) (any, bool) {
 		return d.LiquidLookup(prop)
 	}
 
+	// liquify(obj) above may have produced a map[string]any (a domain
+	// type whose ToLiquid() returns a map representation). Handle that
+	// here — the fast path at the top only catches inputs that were
+	// already maps.
 	if m, ok := obj.(map[string]any); ok {
 		if v, present := m[prop]; present {
 			return v, true
 		}
-		// Fall through to special-property handling so `hash.size` (etc.) works
-		// when the map has no literal entry for that name. An explicit map entry
-		// shadows the built-in.
 		switch prop {
 		case "size":
 			return len(m), true
